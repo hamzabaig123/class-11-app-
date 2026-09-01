@@ -1,0 +1,569 @@
+// Prisma Schema for MCQ Master (SQLite)
+// Run: npx prisma generate && npx prisma db push
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  subjects         Subject[]
+  topics           Topic[]
+  questions        Question[]
+  attempts         Attempt[]
+  reviewItems      ReviewItem[]
+  practiceSessions PracticeSession[]
+  activityEvents   ActivityEvent[]
+  imports          Import[]
+  settings         UserSettings?
+  notifications    NotificationSettings?
+  userSessions     UserSession[]
+  exportJobs       DataExportJob[]
+  collections      Collection[]
+  notes            Note[]
+  noteCategories   NoteCategory[]
+  bookmarks        QuestionBookmark[]
+  collectionActivities CollectionActivity[]
+  noteRevisions    NoteRevision[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Subject {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  icon        String?
+  color       String?
+  position    Int      @default(0)
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topics    Topic[]
+  questions Question[]
+  collections Collection[]
+  notes       Note[]
+
+  @@index([userId])
+  @@index([userId, position])
+}
+
+model Topic {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  position    Int      @default(0)
+  subjectId   String
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subject   Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions Question[]
+  notes       Note[]
+
+  @@index([subjectId])
+  @@index([userId])
+  @@index([subjectId, position])
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  text        String
+  explanation String?
+  hint        String?
+  source      String?
+  year        Int?
+  difficulty  String   @default("MEDIUM")
+  status      String   @default("ACTIVE")
+  position    Int      @default(0)
+  userId      String
+  subjectId   String?
+  topicId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject           Subject?                 @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  topic             Topic?                   @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  options           QuestionOption[]
+  answer            QuestionAnswer?
+  tags              QuestionTag[]
+  attempts          Attempt[]
+  reviewItems       ReviewItem[]
+  importedFrom      ImportedQuestion?
+  practiceQuestions PracticeSessionQuestion[]
+  bookmarks    QuestionBookmark[]
+  collectionItems CollectionQuestion[]
+  noteLinks       NoteQuestion[]
+
+  @@index([userId])
+  @@index([subjectId])
+  @@index([topicId])
+  @@index([status])
+  @@index([userId, createdAt])
+}
+
+model QuestionOption {
+  id         String @id @default(cuid())
+  questionId String
+  label      String
+  text       String
+  position   Int    @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, label])
+  @@index([questionId])
+}
+
+model QuestionAnswer {
+  id           String   @id @default(cuid())
+  questionId   String   @unique
+  correctLabel String
+  explanation  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model QuestionTag {
+  id         String  @id @default(cuid())
+  questionId String
+  name       String
+  color      String?
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, name])
+  @@index([questionId])
+}
+
+model Attempt {
+  id            String   @id @default(cuid())
+  questionId    String
+  userId        String
+  selectedLabel String
+  isCorrect     Boolean
+  confidence    String?
+  hintUsed      Boolean  @default(false)
+  timeSpentMs   Int?
+  sessionId     String?
+  attemptedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  question Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session  PracticeSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([questionId])
+  @@index([sessionId])
+  @@index([userId, createdAt])
+  @@index([userId, isCorrect])
+}
+
+model ReviewItem {
+  id             String    @id @default(cuid())
+  questionId     String
+  userId         String
+  status         String    @default("NEW")
+  intervalDays   Int       @default(0)
+  easeFactor     Float     @default(2.5)
+  repetitions    Int       @default(0)
+  nextReviewAt   DateTime  @default(now())
+  lastReviewedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, nextReviewAt])
+  @@index([nextReviewAt])
+}
+
+model PracticeSession {
+  id               String    @id @default(cuid())
+  userId           String
+  title            String?
+  mode             String    @default("QUICK")
+  type             String    @default("PRACTICE")
+  status           String    @default("IN_PROGRESS")
+  questionCount    Int       @default(0)
+  currentIndex     Int       @default(0)
+  timeLimitSeconds Int?
+  correctCount     Int       @default(0)
+  answeredCount    Int       @default(0)
+  totalTimeMs      Int       @default(0)
+  startedAt        DateTime  @default(now())
+  lastActiveAt     DateTime  @default(now())
+  completedAt      DateTime?
+  score            Float?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts          Attempt[]
+  practiceQuestions PracticeSessionQuestion[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([status])
+}
+
+model PracticeSessionQuestion {
+  id               String    @id @default(cuid())
+  sessionId        String
+  questionId       String
+  position         Int
+  selectedOptionKey String?
+  isCorrect        Boolean?
+  status           String    @default("UNANSWERED")
+  hintUsed         Boolean   @default(false)
+  confidence       String?
+  timeSpentMs      Int       @default(0)
+  answeredAt       DateTime?
+
+  session  PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@unique([sessionId, position])
+  @@index([sessionId])
+  @@index([questionId])
+}
+
+model ActivityEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  title       String
+  description String?
+  entityId    String?
+  entityType  String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([type])
+}
+
+model Import {
+  id             String    @id @default(cuid())
+  userId         String
+  fileName       String
+  fileSize       Int
+  fileType       String
+  status         String    @default("PENDING")
+  totalQuestions Int       @default(0)
+  approvedCount  Int       @default(0)
+  rejectedCount  Int       @default(0)
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  completedAt    DateTime?
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  importedQuestions ImportedQuestion[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([status])
+}
+
+model ImportedQuestion {
+  id           String   @id @default(cuid())
+  importId     String
+  questionText String
+  options      String   @default("[]")
+  correctLabel String
+  explanation  String?
+  hint         String?
+  subjectName  String?
+  topicName    String?
+  difficulty   String   @default("MEDIUM")
+  tags         String   @default("[]")
+  status       String   @default("PENDING")
+  reviewNotes  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  import     Import    @relation(fields: [importId], references: [id], onDelete: Cascade)
+  question   Question? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  questionId String?   @unique
+
+  @@index([importId])
+  @@index([status])
+}
+
+model UserSettings {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  timezone           String   @default("UTC")
+  dateFormat         String   @default("YYYY-MM-DD")
+  timeFormat         String   @default("24h")
+  theme              String   @default("SYSTEM")
+  emailNotifications Boolean  @default(true)
+  pushNotifications  Boolean  @default(false)
+  dailyReminder      Boolean  @default(false)
+  reminderTime       String?
+  masteryThreshold   Int      @default(3)
+  easeFactorDefault  Float    @default(2.5)
+  dailyQuestionGoal  Int      @default(20)
+  dailyMinuteGoal    Int      @default(30)
+  defaultPracticeMode String  @default("QUICK")
+  defaultQuestionCount Int   @default(10)
+  timerPreference    String   @default("OFF")
+  defaultDifficulty  String   @default("MEDIUM")
+  explanationPreference String @default("IMMEDIATE")
+  hintPreference     String   @default("ALLOWED")
+  weekendReview      String   @default("NORMAL")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model QuestionBookmark {
+  id         String   @id @default(cuid())
+  userId     String
+  questionId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([questionId])
+}
+
+model NotificationSettings {
+  id                        String   @id @default(cuid())
+  userId                    String   @unique
+  dueReviewEnabled          Boolean  @default(true)
+  dailyGoalEnabled          Boolean  @default(true)
+  importCompletionEnabled   Boolean  @default(true)
+  practiceCompletionEnabled Boolean  @default(true)
+  preferredHour             Int?
+  inAppEnabled              Boolean  @default(true)
+  updatedAt                 DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserSession {
+  id                String    @id @default(cuid())
+  userId            String
+  providerSessionId String
+  deviceLabel       String?
+  ipHash            String?
+  userAgentSummary  String?
+  createdAt         DateTime  @default(now())
+  lastSeenAt        DateTime  @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model DataExportJob {
+  id               String   @id @default(cuid())
+  userId           String
+  status           String   @default("QUEUED")
+  format           String   @default("JSON")
+  storageObjectKey String?
+  expiresAt        DateTime?
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Collection {
+  id               String   @id @default(cuid())
+  userId           String
+  name             String
+  description      String?
+  color            String?
+  icon             String?
+  status           String   @default("ACTIVE")
+  isPinned         Boolean  @default(false)
+  defaultSubjectId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  archivedAt       DateTime?
+
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions         CollectionQuestion[]
+  defaultSubject    Subject?              @relation(fields: [defaultSubjectId], references: [id], onDelete: SetNull)
+  activity          CollectionActivity[]
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+model CollectionQuestion {
+  collectionId String
+  questionId   String
+  sortOrder    Int
+  createdAt    DateTime @default(now())
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, questionId])
+  @@unique([collectionId, sortOrder])
+  @@index([questionId])
+}
+
+model CollectionActivity {
+  id             String   @id @default(cuid())
+  collectionId   String
+  userId         String
+  activityType   String
+  metadata       String?
+  createdAt      DateTime @default(now())
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([collectionId])
+}
+
+model Note {
+  id           String   @id @default(cuid())
+  userId       String
+  title        String
+  bodyFormat   String   @default("MARKDOWN")
+  body         String   @default("")
+  subjectId    String?
+  topicId      String?
+  categoryId   String?
+  isPinned     Boolean  @default(false)
+  status       String   @default("ACTIVE")
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  lastSavedAt  DateTime?
+  archivedAt   DateTime?
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject    Subject?      @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  topic      Topic?        @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  category   NoteCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  questions  NoteQuestion[]
+  revisions  NoteRevision[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([categoryId])
+}
+
+model NoteCategory {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  slug      String
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  notes Note[]
+
+  @@index([userId])
+}
+
+model NoteQuestion {
+  noteId     String
+  questionId String
+  createdAt  DateTime @default(now())
+
+  note     Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, questionId])
+  @@index([questionId])
+}
+
+model NoteRevision {
+  id        String   @id @default(cuid())
+  noteId    String
+  userId    String
+  version   Int
+  title     String
+  body      String   @default("")
+  createdAt DateTime @default(now())
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+}
