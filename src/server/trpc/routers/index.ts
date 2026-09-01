@@ -3,6 +3,7 @@ import { createTRPCRouter, protectedProcedure, publicProcedure } from '../init'
 import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
 import { practiceRouter } from './practice'
+import { importsRouter } from './imports'
 
 export const appRouter = createTRPCRouter({
   // Health check
@@ -826,8 +827,8 @@ export const appRouter = createTRPCRouter({
       }),
   }),
 
-  // Imports (AI Studio)
-  imports: createTRPCRouter({
+  // Imports (AI Studio) - Use dedicated router
+  imports: importsRouter,
     create: protectedProcedure
       .input(z.object({
         fileName: z.string(),
