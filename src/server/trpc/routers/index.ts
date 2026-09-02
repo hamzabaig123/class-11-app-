@@ -6,6 +6,8 @@ import { practiceRouter } from './practice'
 import { importsRouter } from './imports'
 import { subjectsRouter, chaptersRouter } from './subjects'
 import { sourcesRouter } from './sources'
+import { bookmarksRouter } from './bookmarks'
+import { searchRouter } from './search'
 import { logActivity, getUserTimezone, calculateStreak, getSubjectsWithStats } from './helpers'
 
 export const appRouter = createTRPCRouter({
@@ -80,6 +82,8 @@ export const appRouter = createTRPCRouter({
   subjects: subjectsRouter,
   chapters: chaptersRouter,
   sources: sourcesRouter,
+  bookmarks: bookmarksRouter,
+  search: searchRouter,
 
   topics: createTRPCRouter({
     list: protectedProcedure.input(z.object({ subjectId: z.string() })).query(async ({ ctx, input }) => {
@@ -256,22 +260,6 @@ export const appRouter = createTRPCRouter({
       const now = new Date()
       const items = await prisma.reviewItem.findMany({ where: { userId: ctx.user.id, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] }, nextReviewAt: { lte: now } }, include: { question: { include: { options: { orderBy: { position: 'asc' } }, answer: true, subject: { select: { id: true, name: true, color: true } }, topic: { select: { id: true, name: true } }, chapter: { select: { id: true, name: true } } } } }, orderBy: { nextReviewAt: 'asc' } })
       return items.map(item => ({ ...item, question: item.question }))
-    }),
-    startSession: protectedProcedure.input(z.object({ questionIds: z.array(z.string()), title: z.string().optional() })).mutation(async ({ ctx, input }) => {
-      const session = await prisma.practiceSession.create({ data: { userId: ctx.user.id, title: input.title, questionCount: input.questionIds.length } })
-      await logActivity(ctx.user.id, 'SESSION_STARTED', 'Started session', session.id, 'session'); return session
-    }),
-    submitAnswer: protectedProcedure.input(z.object({ sessionId: z.string(), questionId: z.string(), selectedLabel: z.enum(['A', 'B', 'C', 'D']) })).mutation(async ({ ctx, input }) => {
-      const question = await prisma.question.findFirst({ where: { id: input.questionId, userId: ctx.user.id }, include: { answer: true } })
-      if (!question) throw new TRPCError({ code: 'NOT_FOUND', message: 'Question not found' })
-      if (!question.answer) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Question has no answer key' })
-      const isCorrect = input.selectedLabel === question.answer.correctLabel
-      const attempt = await prisma.attempt.create({ data: { questionId: input.questionId, userId: ctx.user.id, selectedLabel: input.selectedLabel, isCorrect, sessionId: input.sessionId } })
-      return { attempt, isCorrect, correctLabel: question.answer.correctLabel, explanation: question.answer.explanation }
-    }),
-    completeSession: protectedProcedure.input(z.object({ sessionId: z.string() })).mutation(async ({ ctx, input }) => {
-      const session = await prisma.practiceSession.update({ where: { id: input.sessionId, userId: ctx.user.id }, data: { status: 'COMPLETED', completedAt: new Date() } })
-      await logActivity(ctx.user.id, 'SESSION_COMPLETED', 'Completed session', session.id, 'session'); return session
     }),
   }),
 
