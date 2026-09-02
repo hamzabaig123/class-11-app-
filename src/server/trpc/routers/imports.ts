@@ -218,8 +218,9 @@ export const importsRouter = createTRPCRouter({
 
         const options = JSON.parse(staging.options || '[]')
         for (let i = 0; i < options.length; i++) {
+          const label = options[i].label || String.fromCharCode(65 + i) // A, B, C, D...
           await tx.questionOption.create({
-            data: { questionId: question.id, label: options[i].label, text: options[i].text, position: i },
+            data: { questionId: question.id, label, text: options[i].text, position: i },
           })
         }
 
@@ -306,7 +307,8 @@ export const importsRouter = createTRPCRouter({
 
           const options = JSON.parse(staging.options || '[]')
           for (let i = 0; i < options.length; i++) {
-            await tx.questionOption.create({ data: { questionId: question.id, label: options[i].label, text: options[i].text, position: i } })
+            const label = options[i].label || String.fromCharCode(65 + i) // A, B, C, D...
+            await tx.questionOption.create({ data: { questionId: question.id, label, text: options[i].text, position: i } })
           }
 
           // Only create answer record if correctLabel is set
