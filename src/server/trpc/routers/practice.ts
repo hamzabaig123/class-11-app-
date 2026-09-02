@@ -689,7 +689,6 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
 
       return { success: true }
     }),
-});
 
   // GET weak topics for a user — returns topics sorted by weaknessScore desc
   getWeakTopics: protectedProcedure
@@ -697,23 +696,43 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
     .query(async ({ ctx, input }) => {
       const { limit } = input
 
-      const topicPerformance = await prisma.topicPerformance.findMany({
+      // Calculate weak topics from attempts data
+      const topics = await prisma.topic.findMany({
         where: { userId: ctx.user.id },
-        include: { topic: { select: { id: true, name: true, subject: { select: { name: true } } } } },
-        orderBy: { weaknessScore: 'desc' },
-        take: limit,
+        include: {
+          questions: {
+            include: {
+              attempts: { where: { userId: ctx.user.id } },
+            },
+          },
+          subject: { select: { name: true } },
+        },
       })
 
-      return topicPerformance.map(tp => ({
-        id: tp.topic.id,
-        name: tp.topic.name,
-        subject: tp.topic.subject?.name,
-        correctCount: tp.correctCount,
-        incorrectCount: tp.incorrectCount,
-        weaknessScore: tp.weaknessScore,
-        lastAttemptedAt: tp.lastAttemptedAt,
-      }))
+      const topicStats = topics.map(topic => {
+        const attempts = topic.questions.flatMap(q => q.attempts)
+        const correctCount = attempts.filter(a => a.isCorrect).length
+        const incorrectCount = attempts.filter(a => !a.isCorrect).length
+        const total = correctCount + incorrectCount
+        const weaknessScore = total > 0 ? (incorrectCount / total) * 100 : 0
+
+        return {
+          id: topic.id,
+          name: topic.name,
+          subject: topic.subject?.name,
+          correctCount,
+          incorrectCount,
+          weaknessScore,
+          lastAttemptedAt: attempts.length > 0 ? attempts[attempts.length - 1].createdAt : null,
+        }
+      })
+
+      return topicStats
+        .filter(t => t.correctCount + t.incorrectCount > 0)
+        .sort((a, b) => b.weaknessScore - a.weaknessScore)
+        .slice(0, limit)
     }),
+});
 
 async function updateReviewItem(
   tx: any,
