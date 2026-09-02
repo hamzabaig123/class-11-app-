@@ -13,6 +13,7 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Sparkles,
   FolderOpen,
   FileText,
@@ -75,14 +76,12 @@ function SidebarGoalCard() {
           </div>
           <div>
             <p className="text-xs font-semibold text-burgundy-700">Set a daily goal</p>
-            <p className="text-[11px] text-burgundy-700/80">
-              Consistency builds retention.
-            </p>
+            <p className="text-[11px] text-burgundy-700/80">Consistency builds retention.</p>
           </div>
         </div>
         <Button size="sm" variant="outline" className="w-full h-7 text-xs">
           <Plus className="h-3 w-3 mr-1.5" />
-          Set today's goal
+          Set today&apos;s goal
         </Button>
       </div>
     )
@@ -93,32 +92,21 @@ function SidebarGoalCard() {
   return (
     <div className="rounded-lg bg-muted/50 p-3 space-y-2">
       <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground font-medium">Today's Goal</span>
-        <span
-          className={cn(
-            'font-semibold tabular-nums',
-            isComplete ? 'text-green-600 dark:text-green-500' : 'text-foreground'
-          )}
-        >
+        <span className="text-muted-foreground font-medium">Today&apos;s Goal</span>
+        <span className={cn('font-semibold tabular-nums', isComplete ? 'text-green-600 dark:text-green-500' : 'text-foreground')}>
           {todayAttempted}/{goal}
         </span>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
         <div
-          className={cn(
-            'h-full rounded-full transition-all duration-500',
-            isComplete ? 'bg-green-500' : 'bg-burgundy-600'
-          )}
+          className={cn('h-full rounded-full transition-all duration-500', isComplete ? 'bg-green-500' : 'bg-burgundy-600')}
           style={{ width: `${progress}%` }}
         />
       </div>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <ClockIcon className="h-3 w-3" />
-          <span>
-            {todayStudyMin}
-            {minuteGoal ? `/${minuteGoal}` : ''} min
-          </span>
+          <span>{todayAttempted}/{goal}</span>
         </div>
         {isComplete ? (
           <span className="text-[10px] font-medium text-green-600 dark:text-green-500 flex items-center gap-1">
@@ -126,10 +114,7 @@ function SidebarGoalCard() {
             Done
           </span>
         ) : (
-          <button
-            onClick={() => router.push('/practice/new')}
-            className="text-[11px] font-medium text-burgundy-700 hover:underline"
-          >
+          <button onClick={() => router.push('/practice/new')} className="text-[11px] font-medium text-burgundy-700 hover:underline">
             Start practice →
           </button>
         )}
@@ -140,18 +125,7 @@ function SidebarGoalCard() {
 
 function ClockIcon(props: any) {
   return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
     </svg>
@@ -160,29 +134,74 @@ function ClockIcon(props: any) {
 
 function CheckCircleMiniIcon(props: any) {
   return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
       <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   )
 }
 
+function SubjectTreeItem({ subject, collapsed }: { subject: any; collapsed: boolean }) {
+  const [expanded, setExpanded] = React.useState(false)
+  const pathname = usePathname()
+  const hasChapters = subject.chapters && subject.chapters.length > 0
+
+  return (
+    <li>
+      <div className="flex items-center gap-1">
+        <Link
+          href={`/subjects/${subject.id}`}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium transition-all flex-1',
+            pathname.includes(`/subjects/${subject.id}`)
+              ? 'bg-burgundy-100 text-burgundy-700'
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            collapsed && 'justify-center px-1'
+          )}
+        >
+          <div className={cn('h-2 w-2 rounded-full', subject.color ? '' : 'bg-burgundy-500')} style={subject.color ? { backgroundColor: subject.color } : undefined} />
+          {!collapsed && <span className="truncate">{subject.name}</span>}
+          {!collapsed && (
+            <span className="ml-auto text-xs text-muted-foreground">{subject.questionCount}</span>
+          )}
+        </Link>
+        {!collapsed && hasChapters && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="p-1 rounded hover:bg-accent"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            <ChevronDown className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')} />
+          </button>
+        )}
+      </div>
+      {!collapsed && expanded && hasChapters && (
+        <ul className="ml-4 mt-1 space-y-0.5 border-l-2 border-muted pl-2">
+          {subject.chapters.map((chapter: any) => (
+            <li key={chapter.id}>
+              <Link
+                href={`/chapters/${chapter.id}`}
+                className={cn(
+                  'flex items-center gap-2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground',
+                  pathname.includes(`/chapters/${chapter.id}`) && 'bg-burgundy-50 text-burgundy-700 font-medium'
+                )}
+              >
+                <span className="truncate">{chapter.chapterNo ? `${chapter.chapterNo}. ` : ''}{chapter.name}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{chapter.questionCount}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
 function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarContentProps) {
   const pathname = usePathname()
-  const { data: summary } = trpc.dashboard.summary.useQuery()
-  const dueCount = summary?.dueTodayCount ?? 0
-  const streak = summary?.studyStreakDays ?? 0
+  const { data: navTree } = trpc.navigation.tree.useQuery()
+  const dueCount = navTree?.dueReviewCount ?? 0
+  const streak = navTree?.streak ?? 0
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard'
@@ -202,13 +221,7 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
             <span className="font-semibold text-lg text-foreground">MCQ Master</span>
           </Link>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn('h-8 w-8', collapsed && 'mx-auto')}
-          onClick={onToggleCollapse}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
+        <Button variant="ghost" size="icon" className={cn('h-8 w-8', collapsed && 'mx-auto')} onClick={onToggleCollapse}>
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </Button>
       </div>
@@ -233,14 +246,11 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                       collapsed && 'justify-center px-2'
                     )}
-                    aria-current={isActive(item.href) ? 'page' : undefined}
                   >
-                    <item.icon className={cn('h-5 w-5 shrink-0', isActive(item.href) && 'text-burgundy-600')} aria-hidden="true" />
+                    <item.icon className={cn('h-5 w-5 shrink-0', isActive(item.href) && 'text-burgundy-600')} />
                     {!collapsed && <span>{item.name}</span>}
                     {!collapsed && item.name === 'Revision Planner' && dueCount > 0 && (
-                      <span className="ml-auto bg-burgundy-600 text-white text-xs rounded-full px-2 py-0.5 font-bold">
-                        {dueCount}
-                      </span>
+                      <span className="ml-auto bg-burgundy-600 text-white text-xs rounded-full px-2 py-0.5 font-bold">{dueCount}</span>
                     )}
                   </Link>
                 </TooltipTrigger>
@@ -253,6 +263,23 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
             </li>
           ))}
         </ul>
+
+        {/* Subject Tree */}
+        {!collapsed && navTree?.subjects && navTree.subjects.length > 0 && (
+          <div className="mt-6">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3 flex items-center justify-between">
+              <span>Syllabus</span>
+              <Link href="/subjects/new" className="text-burgundy-600 hover:underline">
+                <Plus className="h-3 w-3" />
+              </Link>
+            </div>
+            <ul className="space-y-1">
+              {navTree.subjects.map((subject: any) => (
+                <SubjectTreeItem key={subject.id} subject={subject} collapsed={collapsed} />
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className={cn('text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6 mb-2', collapsed ? 'sr-only' : 'px-3')}>
           Workspace
@@ -272,9 +299,8 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                       collapsed && 'justify-center px-2'
                     )}
-                    aria-current={isActive(item.href) ? 'page' : undefined}
                   >
-                    <item.icon className={cn('h-5 w-5 shrink-0', isActive(item.href) && 'text-burgundy-600')} aria-hidden="true" />
+                    <item.icon className={cn('h-5 w-5 shrink-0', isActive(item.href) && 'text-burgundy-600')} />
                     {!collapsed && <span>{item.name}</span>}
                   </Link>
                 </TooltipTrigger>
@@ -291,18 +317,13 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
 
       {/* Footer */}
       <div className="border-t p-3 space-y-2">
-        {/* Mini Daily Goal Card */}
         {!collapsed && <SidebarGoalCard />}
-
-        {/* Streak */}
         {!collapsed && streak > 0 && (
           <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
             <Flame className="h-3 w-3 text-orange-500" />
             <span>{streak} day streak</span>
           </div>
         )}
-
-        {/* Secondary Nav */}
         <ul className="space-y-1">
           {secondaryNav.map((item) => (
             <li key={item.name}>
@@ -316,9 +337,8 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
                       isActive(item.href) && 'bg-burgundy-100 text-burgundy-700',
                       collapsed && 'justify-center px-2'
                     )}
-                    aria-current={isActive(item.href) ? 'page' : undefined}
                   >
-                    <item.icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                    <item.icon className="h-5 w-5 shrink-0" />
                     {!collapsed && <span>{item.name}</span>}
                   </Link>
                 </TooltipTrigger>
@@ -346,29 +366,16 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
 
   return (
     <>
-      {/* Desktop Sidebar */}
       <TooltipProvider>
-        <aside
-          className={cn(
-            'fixed left-0 top-0 z-40 h-screen border-r transition-all duration-200 hidden lg:block',
-            collapsed ? 'w-16' : 'w-64'
-          )}
-          aria-label="Main navigation"
-        >
+        <aside className={cn('fixed left-0 top-0 z-40 h-screen border-r transition-all duration-200 hidden lg:block', collapsed ? 'w-16' : 'w-64')}>
           <SidebarContent collapsed={collapsed} onToggleCollapse={onToggleCollapse ?? (() => {})} />
         </aside>
       </TooltipProvider>
 
-      {/* Mobile Menu Button */}
-      <button
-        className="fixed top-4 left-4 z-50 lg:hidden h-10 w-10 bg-card border rounded-lg flex items-center justify-center shadow-sm"
-        onClick={() => setMobileOpen(true)}
-        aria-label="Open menu"
-      >
+      <button className="fixed top-4 left-4 z-50 lg:hidden h-10 w-10 bg-card border rounded-lg flex items-center justify-center shadow-sm" onClick={() => setMobileOpen(true)}>
         <Menu className="h-5 w-5" />
       </button>
 
-      {/* Mobile Drawer */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="w-72 p-0">
           <div className="flex items-center justify-between p-4 border-b">

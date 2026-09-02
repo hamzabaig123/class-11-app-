@@ -24,6 +24,7 @@ model User {
   sessions             Session[]
   subjects             Subject[]
   topics               Topic[]
+  chapters             Chapter[]
   questions            Question[]
   attempts             Attempt[]
   reviewItems          ReviewItem[]
@@ -40,6 +41,8 @@ model User {
   bookmarks            QuestionBookmark[]
   collectionActivities CollectionActivity[]
   noteRevisions        NoteRevision[]
+  sources              Source[]
+  questionRevisions    QuestionRevision[]
 }
 
 model Account {
@@ -81,24 +84,30 @@ model VerificationToken {
 }
 
 model Subject {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
+  slug        String?
   description String?
   icon        String?
   color       String?
-  position    Int      @default(0)
+  position    Int       @default(0)
+  status      String    @default("ACTIVE")
+  archivedAt  DateTime?
   userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   topics      Topic[]
+  chapters    Chapter[]
   questions   Question[]
   collections Collection[]
   notes       Note[]
+  sources     Source[]
 
+  @@unique([userId, slug])
   @@index([userId])
-  @@index([userId, position])
+  @@index([userId, status, position])
 }
 
 model Topic {
@@ -121,6 +130,74 @@ model Topic {
   @@index([subjectId, position])
 }
 
+model Chapter {
+  id          String    @id @default(cuid())
+  userId      String
+  subjectId   String
+  name        String
+  chapterNo   String?
+  description String?
+  position    Int       @default(0)
+  status      String    @default("ACTIVE")
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject     Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  sources     Source[]
+  questions   Question[]
+
+  @@unique([userId, subjectId, name])
+  @@index([subjectId, status, position])
+  @@index([userId])
+}
+
+model Source {
+  id              String    @id @default(cuid())
+  userId          String
+  subjectId       String?
+  chapterId       String?
+  title           String
+  sourceType      String    @default("TEXTBOOK")
+  author          String?
+  edition         String?
+  publisher       String?
+  year            Int?
+  fileName        String?
+  storageKey      String?
+  externalUrl     String?
+  extractedText   String?
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject         Subject?          @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  chapter         Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  questionLinks   QuestionSource[]
+  importRecords   Import[]
+
+  @@index([userId, subjectId, chapterId])
+  @@index([userId, status])
+}
+
+model QuestionSource {
+  questionId  String
+  sourceId    String
+  pageNumber  String?
+  section     String?
+  quote       String?
+  isPrimary   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  question    Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  source      Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, sourceId])
+  @@index([sourceId])
+}
+
 model Question {
   id                     String    @id @default(cuid())
   text                   String
@@ -131,17 +208,22 @@ model Question {
   source                 String?
   year                   Int?
   difficulty             String    @default("MEDIUM")
-  status                 String    @default("ACTIVE")
+  status                 String    @default("DRAFT")
+  questionType           String    @default("MCQ")
   position               Int       @default(0)
+  version                Int       @default(1)
+  deletedAt              DateTime?
   userId                 String
   subjectId              String?
   topicId                String?
+  chapterId              String?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
   user              User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   subject           Subject?                  @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   topic             Topic?                    @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  chapter           Chapter?                  @relation(fields: [chapterId], references: [id], onDelete: SetNull)
   options           QuestionOption[]
   answer            QuestionAnswer?
   tags              QuestionTag[]
@@ -152,12 +234,17 @@ model Question {
   bookmarks         QuestionBookmark[]
   collectionItems   CollectionQuestion[]
   noteLinks         NoteQuestion[]
+  questionSources   QuestionSource[]
+  revisions         QuestionRevision[]
 
   @@index([userId])
   @@index([subjectId])
   @@index([topicId])
+  @@index([chapterId])
   @@index([status])
   @@index([userId, createdAt])
+  @@index([userId, status, updatedAt])
+  @@index([userId, subjectId, chapterId])
 }
 
 model QuestionOption {
@@ -194,6 +281,22 @@ model QuestionTag {
 
   @@unique([questionId, name])
   @@index([questionId])
+}
+
+model QuestionRevision {
+  id          String   @id @default(cuid())
+  questionId  String
+  userId      String
+  version     Int
+  snapshot    String
+  changeNote  String?
+  createdAt   DateTime @default(now())
+
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, version])
+  @@index([questionId, createdAt])
 }
 
 model Attempt {
@@ -329,13 +432,15 @@ model Import {
   pendingCount   Int       @default(0)
   fileHash       String?
   progressStep   String?
-  extractedText  String?   // Normalized extracted text for retry without re-upload
+  extractedText  String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   completedAt    DateTime?
 
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   importedQuestions ImportedQuestion[]
+  source            Source?            @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourceId          String?
 
   @@unique([userId, fileHash])
   @@index([userId])

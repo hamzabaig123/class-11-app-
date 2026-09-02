@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { useSearchParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Plus, BookOpen, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,8 +23,20 @@ export default function NewQuestionPage() {
   const searchParams = useSearchParams()
   const activeTab = searchParams.get('tab') || 'create'
 
-  const { data: subjects } = trpc.subjects.list.useQuery()
-  const { data: topics } = trpc.topics.list.useQuery({ subjectId: '' })
+  const { data: subjects } = trpc.subjects.list.useQuery({ includeArchived: false })
+  const [selectedSubjectId, setSelectedSubjectId] = useState(searchParams.get('subjectId') || '')
+  const [selectedChapterId, setSelectedChapterId] = useState(searchParams.get('chapterId') || '')
+
+  // Fetch chapters only when a subject is selected
+  const { data: chapters } = trpc.chapters.list.useQuery(
+    { subjectId: selectedSubjectId, includeArchived: false },
+    { enabled: !!selectedSubjectId }
+  )
+
+  // Reset chapter when subject changes
+  useEffect(() => {
+    setSelectedChapterId('')
+  }, [selectedSubjectId])
 
   const [formData, setFormData] = useState({
     text: '',
@@ -38,6 +49,7 @@ export default function NewQuestionPage() {
     difficulty: 'MEDIUM' as 'EASY' | 'MEDIUM' | 'HARD',
     subjectId: '',
     topicId: '',
+    chapterId: '',
     tags: '',
   })
 
@@ -49,13 +61,6 @@ export default function NewQuestionPage() {
     },
     onError: (error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    },
-  })
-
-  const createSubject = trpc.subjects.create.useMutation({
-    onSuccess: (subject) => {
-      setFormData(prev => ({ ...prev, subjectId: subject.id }))
-      toast({ title: 'Subject created', description: 'You can now select it for your question.' })
     },
   })
 
@@ -79,8 +84,8 @@ export default function NewQuestionPage() {
       source: formData.source || undefined,
       year: formData.year ? parseInt(formData.year) : undefined,
       difficulty: formData.difficulty,
-      subjectId: formData.subjectId || undefined,
-      topicId: formData.topicId || undefined,
+      subjectId: selectedSubjectId || undefined,
+      chapterId: selectedChapterId || undefined,
       tags: formData.tags.split(',').map(t => t.trim()).filter(Boolean),
     })
   }
@@ -197,119 +202,130 @@ export default function NewQuestionPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Metadata</CardTitle>
+                <CardTitle>Curriculum Placement</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="difficulty">Difficulty</Label>
-                    <Select value={formData.difficulty} onValueChange={v => handleChange('difficulty', v as any)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Label htmlFor="subject">Subject</Label>
+                    <Select
+                      value={selectedSubjectId}
+                      onValueChange={setSelectedSubjectId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select subject" />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="EASY">Easy</SelectItem>
-                        <SelectItem value="MEDIUM">Medium</SelectItem>
-                        <SelectItem value="HARD">Hard</SelectItem>
+                        {subjects?.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="year">Year (optional)</Label>
-                    <Input
-                      id="year"
-                      type="number"
-                      min="1900"
-                      max="2100"
-                      value={formData.year}
-                      onChange={(e) => handleChange('year', e.target.value)}
-                      placeholder="2024"
-                    />
+                    <Label htmlFor="chapter">Chapter</Label>
+                    <Select
+                      value={selectedChapterId}
+                      onValueChange={setSelectedChapterId}
+                      disabled={!selectedSubjectId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={selectedSubjectId ? "Select chapter" : "Select a subject first"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {chapters?.map(c => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="source">Source (optional)</Label>
+                  <Label htmlFor="source">Source</Label>
                   <Input
                     id="source"
                     value={formData.source}
                     onChange={(e) => handleChange('source', e.target.value)}
-                    placeholder="e.g., NEET 2023, Custom, Textbook name"
+                    placeholder="e.g., Textbook page 45"
                   />
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="subjectId">Subject</Label>
-                    <Select value={formData.subjectId} onValueChange={v => handleChange('subjectId', v)}>
-                      <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">None</SelectItem>
-                        {subjects?.map(subject => (
-                          <SelectItem key={subject.id} value={subject.id}>{subject.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button variant="link" size="sm" onClick={(e) => {
-                      e.preventDefault()
-                      const name = prompt('Subject name:')
-                      if (name) createSubject.mutate({ name })
-                    }}>
-                      <Plus className="h-3 w-3 mr-1" />
-                      Create new
-                    </Button>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="topicId">Topic (Chapter)</Label>
-                    <Select value={formData.topicId} onValueChange={v => handleChange('topicId', v)} disabled={!formData.subjectId}>
-                      <SelectTrigger><SelectValue placeholder="Select topic" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">None</SelectItem>
-                        {formData.subjectId && topics?.filter(t => t.subjectId === formData.subjectId).map(topic => (
-                          <SelectItem key={topic.id} value={topic.id}>{topic.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
                 <div className="space-y-2">
-                  <Label htmlFor="tags">Tags (comma separated)</Label>
+                  <Label htmlFor="tags">Tags (comma-separated)</Label>
                   <Input
                     id="tags"
                     value={formData.tags}
                     onChange={(e) => handleChange('tags', e.target.value)}
-                    placeholder="anatomy, cardiology, high-yield"
+                    placeholder="e.g., biology, cell, important"
                   />
                 </div>
               </CardContent>
             </Card>
 
-            <CardFooter className="flex justify-end gap-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>Quality Metadata</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="difficulty">Difficulty</Label>
+                    <Select
+                      value={formData.difficulty}
+                      onValueChange={(v) => handleChange('difficulty', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DIFFICULTIES.map(d => (
+                          <SelectItem key={d} value={d}>{d}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="year">Year</Label>
+                    <Input
+                      id="year"
+                      value={formData.year}
+                      onChange={(e) => handleChange('year', e.target.value)}
+                      placeholder="e.g., 2024"
+                      type="number"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => router.back()}>
                 Cancel
               </Button>
-              <Button type="submit" size="lg" loading={createQuestion.isPending}>
-                <Plus className="h-4 w-4 mr-2" />
-                Create Question
+              <Button type="submit" disabled={createQuestion.isPending || !formData.text.trim()}>
+                {createQuestion.isPending ? 'Creating...' : 'Create Question'}
               </Button>
-            </CardFooter>
+            </div>
           </form>
         </TabsContent>
 
         <TabsContent value="import">
           <Card>
             <CardHeader>
-              <CardTitle>Import Questions</CardTitle>
-              <CardDescription>Upload a file or use AI Studio to generate questions from your study materials</CardDescription>
+              <CardTitle>Import MCQs</CardTitle>
+              <CardDescription>Upload PDF or image files to extract MCQs</CardDescription>
             </CardHeader>
-            <CardContent className="py-12 text-center">
-              <Upload className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
-              <h3 className="text-lg font-medium">Import feature coming soon</h3>
-              <p className="text-muted-foreground mt-1">AI Studio will allow you to upload PDFs, DOCX, images, and text files to automatically extract MCQs.</p>
-              <Button asChild className="mt-4" variant="outline">
-                <Link href="/ai-studio">Go to AI Studio</Link>
-              </Button>
+            <CardContent className="space-y-4">
+              <div className="text-center py-8">
+                <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                <p className="text-muted-foreground">
+                  Import functionality is available in AI Studio.
+                </p>
+                <Button asChild className="mt-4">
+                  <Link href="/ai-studio">Go to AI Studio</Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -318,52 +334,15 @@ export default function NewQuestionPage() {
           <Card>
             <CardHeader>
               <CardTitle>Create Subject</CardTitle>
-              <CardDescription>Organize your questions into subjects and chapters</CardDescription>
+              <CardDescription>Add a new subject to organize your questions</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={(e) => {
-                e.preventDefault()
-                const name = (e.currentTarget.elements.namedItem('name') as HTMLInputElement).value
-                if (name) {
-                  createSubject.mutate({ name, description: (e.currentTarget.elements.namedItem('description') as HTMLTextAreaElement).value })
-                  ;(e.currentTarget.elements.namedItem('name') as HTMLInputElement).value = ''
-                  ;(e.currentTarget.elements.namedItem('description') as HTMLTextAreaElement).value = ''
-                }
-              }} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="subjectName">Subject Name *</Label>
-                  <Input id="subjectName" name="name" placeholder="e.g., Biology, Physics, History" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="subjectDescription">Description</Label>
-                  <Textarea id="subjectDescription" name="description" placeholder="Optional description" rows={3} />
-                </div>
-                <div className="flex justify-end">
-                  <Button type="submit" loading={createSubject.isPending}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Subject
-                  </Button>
-                </div>
-              </form>
-
-              {subjects && subjects.length > 0 && (
-                <div className="mt-8">
-                  <h3 className="text-lg font-medium mb-3">Existing Subjects</h3>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {subjects.map(subject => (
-                      <Badge key={subject.id} variant="secondary" className="h-auto p-3 text-left gap-2">
-                        <div className="flex-1">
-                          <p className="font-medium">{subject.name}</p>
-                          <p className="text-xs text-muted-foreground">{subject._count.questions} questions</p>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-6 w-6">
-                          <ArrowLeft className="h-4 w-4" />
-                        </Button>
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <p className="text-muted-foreground text-sm">
+                Use the syllabus navigator in the sidebar to create and manage subjects.
+              </p>
+              <Button asChild className="mt-4">
+                <Link href="/subjects">View Subjects</Link>
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
