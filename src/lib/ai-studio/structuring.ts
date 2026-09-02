@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { getAIClient, TEXT_MODEL } from './client'
 
 const MCQSchema = z.object({
   question_text: z.string().min(1).max(5000),
@@ -55,14 +54,15 @@ export async function structureText(
     return { mcqs: [], warnings: ['Input text too short for extraction'] }
   }
 
-  const model = TEXT_MODEL
   const chunks = chunkText(text, 3000)
   const allMcqs: MCQ[] = []
 
+  const { executeAI } = await import('./client')
+
   for (const chunk of chunks) {
     try {
-      const response = await getAIClient().chat.completions.create({
-        model,
+      const response = await executeAI({
+        model: 'unused', // overridden in fallback
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           {
@@ -102,11 +102,12 @@ export async function generateMCQs(
   count: number
 ): Promise<{ mcqs: MCQ[]; warnings: string[] }> {
   const warnings: string[] = []
-  const model = TEXT_MODEL
+  
+  const { executeAI } = await import('./client')
 
   try {
-    const response = await getAIClient().chat.completions.create({
-      model,
+    const response = await executeAI({
+      model: 'unused', // overridden in fallback
       messages: [
         { role: 'system', content: GENERATION_PROMPT },
         {

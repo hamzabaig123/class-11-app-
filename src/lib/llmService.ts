@@ -12,11 +12,7 @@ function getClient(): OpenAI {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY || '',
-      baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': process.env.NEXTAUTH_URL || 'http://localhost:3000',
-        'X-Title': 'MCQ Master',
-      },
+      baseURL: process.env.OPENAI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/',
     })
   }
   return _client
@@ -32,7 +28,7 @@ export async function callLLM(req: {
   temperature?: number
   max_tokens?: number
 }): Promise<{ success: boolean; error?: string; data?: any; raw?: string }> {
-  const model = process.env.OPENAI_MODEL || 'google/gemini-2.0-flash-001'
+  const model = process.env.OPENAI_MODEL || 'gemini-2.5-flash'
   
   try {
     const messages: { role: 'system' | 'user'; content: string }[] = []

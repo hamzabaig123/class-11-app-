@@ -1,6 +1,5 @@
 import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
-import { getAIClient, VISION_MODEL } from './client'
 
 export interface ExtractionResult {
   text: string
@@ -78,8 +77,9 @@ async function extractImage(buffer: Buffer, mimeType: string): Promise<Extractio
 
   try {
     const base64 = buffer.toString('base64')
-    const response = await getAIClient().chat.completions.create({
-      model: VISION_MODEL,
+    const { executeAI } = await import('./client')
+    const response = await executeAI({
+      model: 'unused', // overridden in fallback
       messages: [
         {
           role: 'user',

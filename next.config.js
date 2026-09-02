@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
+    serverComponentsExternalPackages: ['pdf-parse', 'pdfjs-dist'],
     serverActions: {
       bodySizeLimit: '2mb',
     },

@@ -1,29 +1,29 @@
 import OpenAI from 'openai'
 
-let _client: OpenAI | null = null
+let _googleClient: OpenAI | null = null
 
-export function getAIClient(): OpenAI {
-  if (!_client) {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error(
-        'OPENAI_API_KEY is not set. Add it to your .env file to enable AI extraction/structuring.'
-      )
-    }
-    _client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': process.env.NEXTAUTH_URL || 'http://localhost:3000',
-        'X-Title': 'MCQ Master',
-      },
+export function getGoogleClient(): OpenAI {
+  if (!_googleClient) {
+    _googleClient = new OpenAI({
+      apiKey: process.env.GOOGLE_API_KEY || '',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     })
   }
-  return _client
+  return _googleClient
 }
 
-// Text model used for structuring MCQs out of plain text.
-export const TEXT_MODEL = process.env.OPENAI_MODEL || 'google/gemini-2.0-flash-001'
+// Google AI Studio models
+export const TEXT_MODEL = 'gemini-2.5-flash'
+export const VISION_MODEL = 'gemini-2.5-flash'
 
-// Vision-capable model used for OCR/transcription of images.
-// Defaults to the same model since Gemini Flash is multimodal.
-export const VISION_MODEL = process.env.OPENAI_VISION_MODEL || TEXT_MODEL
+// Execute AI request via Google AI Studio
+export async function executeAI(
+  params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
+) {
+  const googleClient = getGoogleClient()
+  return await googleClient.chat.completions.create({
+    ...params,
+    model: TEXT_MODEL,
+  })
+}
+

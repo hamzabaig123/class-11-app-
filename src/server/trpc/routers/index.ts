@@ -30,6 +30,7 @@ export const appRouter = createTRPCRouter({
         todayCorrectCount,
         todayStudySeconds,
         dueTodayCount,
+        weakTopics,
         streakDays,
         studyTimeSeconds,
         unfinishedSession,

@@ -90,7 +90,7 @@ export const importsRouter = createTRPCRouter({
   getStatus: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ input, ctx }) => {
-      const importRecord = await prisma.import.findUnique({
+      const importRecord = await prisma.import.findFirst({
         where: { id: input.id, userId: ctx.user.id },
       })
       if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
@@ -189,7 +189,6 @@ export const importsRouter = createTRPCRouter({
         include: { import: true },
       })
       if (!staging) throw new TRPCError({ code: 'NOT_FOUND', message: 'Staging question not found' })
-      if (!staging.correctLabel) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot approve: no correct answer set' })
 
       await prisma.$transaction(async (tx) => {
         let subject = null
@@ -224,9 +223,12 @@ export const importsRouter = createTRPCRouter({
           })
         }
 
-        await tx.questionAnswer.create({
-          data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation },
-        })
+        // Only create answer record if correctLabel is set
+        if (staging.correctLabel) {
+          await tx.questionAnswer.create({
+            data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation },
+          })
+        }
 
         await tx.reviewItem.create({
           data: { questionId: question.id, userId: ctx.user.id, status: 'NEW', nextReviewAt: new Date() },
@@ -265,13 +267,13 @@ export const importsRouter = createTRPCRouter({
       return { success: true }
     }),
 
-  // Bulk approve all pending questions
+  // Bulk approve all pending questions (including those without correctLabel)
   bulkApprove: protectedProcedure
     .input(z.object({ importId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const importRecord = await prisma.import.findFirst({
         where: { id: input.importId, userId: ctx.user.id },
-        include: { importedQuestions: { where: { status: 'pending', correctLabel: { not: null } } } },
+        include: { importedQuestions: { where: { status: 'pending' } } },
       })
       if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
 
@@ -307,7 +309,10 @@ export const importsRouter = createTRPCRouter({
             await tx.questionOption.create({ data: { questionId: question.id, label: options[i].label, text: options[i].text, position: i } })
           }
 
-          await tx.questionAnswer.create({ data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation } })
+          // Only create answer record if correctLabel is set
+          if (staging.correctLabel) {
+            await tx.questionAnswer.create({ data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation } })
+          }
           await tx.reviewItem.create({ data: { questionId: question.id, userId: ctx.user.id, status: 'NEW', nextReviewAt: new Date() } })
           await tx.importedQuestion.update({ where: { id: staging.id }, data: { status: 'approved', questionId: question.id } })
         })

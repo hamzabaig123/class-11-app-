@@ -1,6 +1,7 @@
 'use client'
 
-import { Upload, FileText, Image, Brain, ArrowRight, Loader2, CheckCircle2, XCircle, AlertCircle, Clock, Eye } from 'lucide-react'
+import { useState } from 'react'
+import { Upload, FileText, Image, Brain, ArrowRight, Loader2, CheckCircle2, XCircle, AlertCircle, Clock, Eye, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -9,7 +10,22 @@ import { trpc } from '@/lib/trpc'
 import { formatDistanceToNow } from 'date-fns'
 
 export default function AIStudioPage() {
-  const { data: imports, isLoading } = trpc.imports.list.useQuery({ limit: 10 })
+  const { data: imports, isLoading, refetch } = trpc.imports.list.useQuery({ limit: 10 })
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const deleteMutation = trpc.imports.delete.useMutation({
+    onSuccess: () => {
+      refetch()
+      setDeletingId(null)
+    },
+  })
+
+  const handleDelete = async (id: string, fileName: string) => {
+    if (confirm(`Delete import "${fileName}"? This will remove all associated questions and cannot be undone.`)) {
+      setDeletingId(id)
+      await deleteMutation.mutateAsync({ id })
+    }
+  }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -170,7 +186,7 @@ export default function AIStudioPage() {
                       <span>{(imp.fileSize / 1024).toFixed(1)} KB</span>
                       <span>•</span>
                       <span>{formatDistanceToNow(new Date(imp.createdAt), { addSuffix: true })}</span>
-                      {imp.status === 'COMPLETED' && (
+                      {['pending_review', 'structured_ok'].includes(imp.status) && (
                         <>
                           <span>•</span>
                           <span className="text-green-600 font-medium">
@@ -179,7 +195,7 @@ export default function AIStudioPage() {
                         </>
                       )}
                     </div>
-                    {imp.status === 'COMPLETED' && imp.totalQuestions > 0 && (
+                    {['pending_review', 'structured_ok'].includes(imp.status) && imp.totalQuestions > 0 && (
                       <div className="flex items-center gap-3 mt-2 text-xs">
                         <span className="text-green-600">{imp.approvedCount} approved</span>
                         <span className="text-red-600">{imp.rejectedCount} rejected</span>
@@ -188,21 +204,29 @@ export default function AIStudioPage() {
                         </span>
                       </div>
                     )}
-                    {imp.status === 'FAILED' && imp.errorMessage && (
+                    {['failed', 'structuring_failed'].includes(imp.status) && imp.errorMessage && (
                       <p className="text-sm text-destructive mt-1">{imp.errorMessage}</p>
                     )}
                   </div>
                   <Button asChild variant="ghost" size="sm">
                     <Link href={`/ai-studio/review/${imp.id}`}>
                       <Eye className="h-4 w-4 mr-1" />
-                      {imp.status === 'PROCESSING' ? 'View Status' : 'Review'}
+                      {['queued', 'extracting', 'structuring'].includes(imp.status) ? 'View Status' : 'Review'}
                     </Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(imp.id, imp.fileName)}
+                    disabled={deletingId === imp.id}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-500" />
                   </Button>
                 </div>
               ))}
               {imports.imports.length >= 10 && (
                 <div className="text-center pt-2">
-                  <Button variant="link">View all imports</Button>
+                  <Button asChild variant="link"><Link href="/ai-studio">View all imports</Link></Button>
                 </div>
               )}
             </div>
