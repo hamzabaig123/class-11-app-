@@ -71,7 +71,10 @@ export function PracticeHeader({ session, onExit }: PracticeHeaderProps) {
   useEffect(() => {
     if (!session.startedAt) return
     const interval = setInterval(() => {
-      setElapsedMs(Date.now() - new Date(session.startedAt).getTime())
+      const startedAt = session.startedAt
+      if (startedAt) {
+        setElapsedMs(Date.now() - new Date(startedAt).getTime())
+      }
     }, 1000)
     return () => clearInterval(interval)
   }, [session.startedAt])

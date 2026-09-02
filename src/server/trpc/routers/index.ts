@@ -8,6 +8,8 @@ import { subjectsRouter, chaptersRouter } from './subjects'
 import { sourcesRouter } from './sources'
 import { bookmarksRouter } from './bookmarks'
 import { searchRouter } from './search'
+import { contentImportsRouter } from './contentImports'
+import { qaRouter } from './qa'
 import { logActivity, getUserTimezone, calculateStreak, getSubjectsWithStats } from './helpers'
 
 export const appRouter = createTRPCRouter({
@@ -110,6 +112,7 @@ export const appRouter = createTRPCRouter({
   sources: sourcesRouter,
   bookmarks: bookmarksRouter,
   search: searchRouter,
+  qa: qaRouter,
 
   topics: createTRPCRouter({
     list: protectedProcedure.input(z.object({ subjectId: z.string() })).query(async ({ ctx, input }) => {
@@ -404,6 +407,7 @@ export const appRouter = createTRPCRouter({
   }),
 
   imports: importsRouter,
+  contentImports: contentImportsRouter,
 
   collections: createTRPCRouter({
     list: protectedProcedure.input(z.object({ query: z.string().optional(), subjectId: z.string().optional(), sort: z.enum(['recent', 'name', 'questionCount', 'accuracy', 'lastPracticed']).default('recent'), page: z.number().default(1), pageSize: z.number().default(20) })).query(async ({ ctx, input }) => {

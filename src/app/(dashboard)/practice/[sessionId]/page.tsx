@@ -77,7 +77,7 @@ export default function PracticeSessionPage() {
   const unansweredCount = session?.questions.filter(q => q.status === 'UNANSWERED').length ?? 0
   const skippedCount = session?.questions.filter(q => q.status === 'SKIPPED').length ?? 0
 
-  const handleSubmit = useCallback((selectedOption: string, confidence?: ConfidenceLevel, hintUsed?: boolean) => {
+  const handleSubmit = useCallback((selectedOption: string, confidence?: string, hintUsed?: boolean) => {
     if (!currentQuestion || !session) return
     const timeSpentMs = Date.now() - questionStartTime
     answerMutation.mutate({
@@ -87,7 +87,7 @@ export default function PracticeSessionPage() {
       sequence: currentIndex,
       selectedLabel: selectedOption as 'A' | 'B' | 'C' | 'D',
       timeSpentMs,
-      confidence,
+      confidence: confidence as 'unsure' | 'medium' | 'confident' | undefined,
       hintUsed: hintUsed ?? false,
     })
     setIsSubmitted(true)
@@ -142,7 +142,7 @@ export default function PracticeSessionPage() {
     return <ResultsPage results={results} />
   }
 
-  const feedback = isSubmitted && currentQuestion?.isCorrect !== null
+  const feedback = isSubmitted && currentQuestion && currentQuestion.isCorrect !== null
     ? {
         isCorrect: currentQuestion.isCorrect ?? false,
         correctLabel: currentQuestion.selectedLabel ?? '',
