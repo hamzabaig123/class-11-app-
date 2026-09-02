@@ -41,6 +41,23 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
       message: 'You must be logged in to perform this action',
     })
   }
+
+  // The JWT session cookie can outlive the actual row in the database
+  // (e.g. after `prisma migrate reset`, a reseed, or a DB switch). Trusting
+  // the cookie's id blindly causes foreign-key violations deep inside
+  // mutations. Verify the user still exists before letting the request through.
+  const dbUser = await ctx.prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { id: true },
+  })
+
+  if (!dbUser) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'Your session is no longer valid. Please sign in again.',
+    })
+  }
+
   return next({
     ctx: {
       ...ctx,
