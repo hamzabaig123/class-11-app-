@@ -17,7 +17,7 @@ export function DashboardPage() {
   const { data, isLoading, isError, error, refetch } = trpc.dashboard.summary.useQuery()
 
   const handleAddQuestion = useCallback(() => {
-    router.push('/questions/create')
+    router.push('/questions/new')
   }, [router])
 
   const handleOpenLibrary = useCallback(() => {
@@ -25,7 +25,7 @@ export function DashboardPage() {
   }, [router])
 
   const handleCreateSubject = useCallback(() => {
-    router.push('/questions/create')
+    router.push('/subjects/new')
   }, [router])
 
   const handleImportQuestions = useCallback(() => {
