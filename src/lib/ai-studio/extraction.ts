@@ -31,14 +31,12 @@ export async function extractText(
       return { text, warnings }
     }
     case 'image': {
-      // OCR would go here (Tesseract or Cloud Vision)
       return {
         text: '',
         warnings: ['Image/OCR extraction not yet implemented'],
       }
     }
     case 'ai_generated': {
-      // No extraction needed - AI generation goes straight to structuring
       return { text: '', warnings: [] }
     }
     default:
@@ -49,11 +47,10 @@ export async function extractText(
 async function extractPdf(buffer: Buffer): Promise<ExtractionResult> {
   const warnings: string[] = []
   const data = await pdf(buffer)
-  
+
   const text = data.text || ''
   const pageCount = data.numpages
 
-  // Heuristic: if very little text per page, likely scanned
   const avgCharsPerPage = text.length / (pageCount || 1)
   if (avgCharsPerPage < 50) {
     warnings.push(
@@ -67,7 +64,7 @@ async function extractPdf(buffer: Buffer): Promise<ExtractionResult> {
 async function extractDocx(buffer: Buffer): Promise<ExtractionResult> {
   const warnings: string[] = []
   const result = await mammoth.extractRawText({ buffer })
-  
+
   if (result.messages.length > 0) {
     const errors = result.messages.filter((m) => m.type === 'error')
     if (errors.length > 0) {

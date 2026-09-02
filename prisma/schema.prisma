@@ -329,6 +329,7 @@ model Import {
   pendingCount   Int       @default(0)
   fileHash       String?
   progressStep   String?
+  extractedText  String?   // Normalized extracted text for retry without re-upload
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   completedAt    DateTime?

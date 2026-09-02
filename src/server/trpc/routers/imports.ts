@@ -24,7 +24,17 @@ export const importsRouter = createTRPCRouter({
           fileType: input.fileType,
           sourceType: input.sourceType,
           status: 'queued',
-        },
+ },
+      }).catch((error: any) => {
+        // Foreign key violation means the user no longer exists in the DB
+        // (e.g. DB reset/reseed). Force re-authentication.
+        if (error?.code === 'P2003') {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Your session is no longer valid. Please sign in again.',
+          })
+        }
+        throw error
       })
 
       // Run processing (sync for now; in production: background job)
@@ -52,18 +62,27 @@ export const importsRouter = createTRPCRouter({
       })
       if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
 
+      // If import has persisted extractedText, we can retry without re-upload
+      // by passing extractedText from the import record
+      const hasExtractedText =
+        importRecord.status === 'needs_manual' ||
+        (importRecord.status === 'pending_review' && importRecord.progressStep?.includes('Ready'))
+
       await prisma.import.update({
         where: { id: input.id },
         data: { status: 'queued', retryCount: { increment: 1 }, errorReason: null, errorMessage: null },
       })
 
-      processImport(importRecord.id, ctx.user.id, importRecord.sourceType)
-        .catch(async (error) => {
-          await prisma.import.update({
-            where: { id: input.id },
-            data: { status: 'failed', errorReason: error instanceof Error ? error.message : 'Retry failed' },
-          })
-        })
+      // For needs_manual imports, we still need the original file/text
+      // In a full implementation, the original file would be stored securely
+      // and re-fetched here. For now, we'll attempt processing with
+      // the existing extractedText if available.
+      const importData = await prisma.import.findFirst({
+        where: { id: input.id },
+        select: { extractedText: true, sourceType: true, status: true },
+      })
+
+      await processImport(input.id, ctx.user.id, importData?.sourceType || 'pdf', undefined, undefined, importData?.extractedText)
 
       return { success: true }
     }),
@@ -413,24 +432,31 @@ async function processImport(
 ) {
   // Step 1: Extraction (skip for AI-generated)
   if (sourceType !== 'ai_generated') {
-    await prisma.import.update({
-      where: { id: importId },
-      data: { status: 'extracting', progressStep: 'Extracting text from document...' },
-    })
+    const extractResult = await import('@/lib/ai-studio/extraction').then((mod) => mod.extractText)
 
-    // In production: fetch file from object storage, extract text
-    // For now: use provided text or skip
-    if (!text || text.trim().length < 30) {
+    // For now, use the text parameter if provided; in production this would fetch from object storage
+    let extractionText = text
+    let extractionWarnings: string[] = []
+
+    // If no text provided, try to determine from source type
+    if (!extractionText || extractionText.trim().length < 30) {
+      // No extractable text available
       await prisma.import.update({
         where: { id: importId },
-        data: { status: 'extracted' },
-      })
-      // No text available — mark as needs_manual
-      await prisma.import.update({
-        where: { id: importId },
-        data: { status: 'needs_manual', progressStep: 'No text extracted — manual entry required', completedAt: new Date() },
+        data: {
+          status: 'needs_manual',
+          progressStep: 'No text extracted — manual entry required',
+          completedAt: new Date(),
+        },
       })
       return
+    }
+
+    // Normalize extraction
+    if (extractionText && typeof extractionText === 'string') {
+      // Normalize line endings and collapse unsafe whitespace
+      extractionText = extractionText.replace(/\r\n|\r/g, '\n').replace(/[\n]{3,}/g, '\n').trim()
+      extractionWarnings = []
     }
 
     // Step 2: Structuring
@@ -440,7 +466,14 @@ async function processImport(
     })
 
     const { structureText } = await import('@/lib/ai-studio/structuring')
-    const { mcqs, warnings } = await structureText(text, subject, topic)
+    const { mcqs, warnings: structuringWarnings } = await structureText(
+      extractionText,
+      subject,
+      topic
+    )
+
+    // Merge warnings
+    const allWarnings = [...extractionWarnings, ...structuringWarnings]
 
     for (const mcq of mcqs) {
       await prisma.importedQuestion.create({
@@ -455,8 +488,8 @@ async function processImport(
           topicName: topic,
           status: 'pending',
           confidence: mcq.confidence,
-          warnings: JSON.stringify(mcq.warnings),
-          rawSnippet: text.slice(0, 500),
+          warnings: JSON.stringify(allWarnings),
+          rawSnippet: extractionText?.slice(0, 500) || '',
         },
       })
     }
