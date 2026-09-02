@@ -83,12 +83,29 @@ export const appRouter = createTRPCRouter({
             status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] },
           },
         }),
-        // Weak topics for revision planner
-        prisma.topicPerformance.findMany({
-          where: { userId },
-          include: { topic: { select: { id: true, name: true } } },
-          orderBy: { weaknessScore: 'desc' },
-          take: 5,
+        // Weak topics for revision planner (computed from attempts)
+        prisma.question.findMany({
+          where: { userId, status: 'ACTIVE' },
+          select: {
+            id: true,
+            subjectId: true,
+            topicId: true,
+            attempts: { select: { isCorrect: true } },
+          },
+        }).then(questions => {
+          const topicStats: Record<string, { id: string; name: string; total: number; correct: number }> = {}
+          for (const q of questions) {
+            if (!q.topicId) continue
+            if (!topicStats[q.topicId]) {
+              topicStats[q.topicId] = { id: q.topicId, name: '', total: 0, correct: 0 }
+            }
+            topicStats[q.topicId].total += q.attempts.length
+            topicStats[q.topicId].correct += q.attempts.filter(a => a.isCorrect).length
+          }
+          return Object.values(topicStats)
+            .map(s => ({ ...s, weaknessScore: s.total > 0 ? 1 - (s.correct / s.total) : 0 }))
+            .sort((a, b) => b.weaknessScore - a.weaknessScore)
+            .slice(0, 5)
         }),
         // Study streak
         calculateStreak(userId),

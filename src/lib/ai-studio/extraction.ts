@@ -1,5 +1,6 @@
 import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
+import { getAIClient, VISION_MODEL } from './client'
 
 export interface ExtractionResult {
   text: string
@@ -10,7 +11,8 @@ export interface ExtractionResult {
 export async function extractText(
   buffer: Buffer,
   sourceType: string,
-  fileName: string
+  fileName: string,
+  mimeType?: string
 ): Promise<ExtractionResult> {
   const warnings: string[] = []
 
@@ -31,10 +33,11 @@ export async function extractText(
       return { text, warnings }
     }
     case 'image': {
-      const result = await extractImage(buffer, fileName)
+      const result = await extractImage(buffer, mimeType || 'image/png')
       return result
     }
     case 'ai_generated': {
+      // No extraction needed - AI generation goes straight to structuring
       return { text: '', warnings: [] }
     }
     default:
@@ -44,29 +47,60 @@ export async function extractText(
 
 async function extractPdf(buffer: Buffer): Promise<ExtractionResult> {
   const warnings: string[] = []
-  let parser: PDFParse | null = null
+  const parser = new PDFParse({ data: buffer })
 
   try {
-    parser = new PDFParse({ data: buffer })
-    const data = await parser.getText()
+    const result = await parser.getText()
+    const text = result.text || ''
+    const pageCount = result.total
 
-    const text = data.text || ''
-    const pageCount = data.numpages
-
+    // Heuristic: if very little text per page, likely scanned
     const avgCharsPerPage = text.length / (pageCount || 1)
     if (avgCharsPerPage < 50) {
       warnings.push(
-        `Low text density (${Math.round(avgCharsPerPage)} chars/page). This may be a scanned PDF requiring OCR.`
+        `Low text density (${Math.round(avgCharsPerPage)} chars/page). This may be a scanned/image-only PDF — try re-uploading it as an image instead so OCR can be used.`
       )
     }
 
     return { text, pageCount, warnings }
-  } catch (error) {
-    throw new Error(`PDF parsing failed: ${error instanceof Error ? error.message : 'unknown error'}`)
   } finally {
-    if (parser) {
-      parser.destroy()
+    await parser.destroy()
+  }
+}
+
+const OCR_PROMPT = `Transcribe ALL text visible in this image exactly as written, including every
+multiple-choice question, its options, and any answer key or explanation shown. Preserve
+question numbering and option labels (A/B/C/D etc). Output plain text only — no commentary,
+no markdown formatting, just the transcribed content.`
+
+async function extractImage(buffer: Buffer, mimeType: string): Promise<ExtractionResult> {
+  const warnings: string[] = []
+
+  try {
+    const base64 = buffer.toString('base64')
+    const response = await getAIClient().chat.completions.create({
+      model: VISION_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: OCR_PROMPT },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ] as any,
+        },
+      ],
+      temperature: 0,
+    })
+
+    const text = response.choices[0]?.message?.content || ''
+    if (text.trim().length < 20) {
+      warnings.push('Little to no text detected in the image — is it clear and legible?')
     }
+    return { text, warnings }
+  } catch (error) {
+    throw new Error(
+      `Image OCR failed: ${error instanceof Error ? error.message : 'unknown error'}`
+    )
   }
 }
 
@@ -82,79 +116,4 @@ async function extractDocx(buffer: Buffer): Promise<ExtractionResult> {
   }
 
   return { text: result.value, warnings }
-}
-
-async function extractImage(buffer: Buffer, fileName: string): Promise<ExtractionResult> {
-  const warnings: string[] = []
-
-  // Convert buffer to base64 data URL
-  const mimeType = getMimeType(fileName)
-  const base64 = buffer.toString('base64')
-  const dataUrl = `data:${mimeType};base64,${base64}`
-
-  try {
-    const text = await performOCR(dataUrl)
-    if (text.trim().length < 30) {
-      warnings.push('OCR produced very little text. The image may be unclear or contain no text.')
-    }
-    return { text, warnings }
-  } catch (error) {
-    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'unknown error'}`)
-  }
-}
-
-function getMimeType(fileName: string): string {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  switch (ext) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg'
-    case 'png':
-      return 'image/png'
-    case 'webp':
-      return 'image/webp'
-    case 'gif':
-      return 'image/gif'
-    case 'bmp':
-      return 'image/bmp'
-    default:
-      return 'image/png'
-  }
-}
-
-async function performOCR(dataUrl: string): Promise<string> {
-  const OpenAI = (await import('openai')).default
-
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || '',
-    baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
-    defaultHeaders: {
-      'HTTP-Referer': process.env.NEXTAUTH_URL || 'http://localhost:3000',
-      'X-Title': 'MCQ Master',
-    },
-  })
-
-  const model = process.env.OPENAI_VISION_MODEL || 'google/gemini-2.0-flash-001'
-
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: `Transcribe all visible text in this image exactly as it appears. Preserve question numbering (e.g. "Q1.", "1.", "(1)"), option labels (e.g. "A.", "(A)", "A)"), and paragraph structure. If a region is unreadable, mark it as [unreadable]. Return only the transcription, no explanations.`,
-          },
-          {
-            type: 'image_url',
-            image_url: { url: dataUrl },
-          },
-        ],
-      },
-    ],
-    temperature: 0.1,
-  })
-
-  return response.choices[0]?.message?.content || ''
 }

@@ -11,26 +11,26 @@ import { Label } from '@/components/ui/label'
 
 const ACCEPTED_TYPES = {
   document: ['.pdf', '.docx', '.txt'],
-  image: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'],
-  all: ['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'],
+  image: ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
+  all: ['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
 }
 
 const ACCEPTED_MIME = {
   document: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'],
-  image: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'],
+  image: ['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp'],
   all: [
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'text/plain',
     'image/png',
     'image/jpeg',
-    'image/webp',
     'image/gif',
     'image/bmp',
+    'image/webp',
   ],
 }
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
 
 interface UploadedFile {
   file: File
@@ -60,7 +60,7 @@ export default function UploadPage() {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return `File size exceeds 25MB limit`
+      return `File size exceeds 50MB limit`
     }
 
     return null
@@ -116,6 +116,31 @@ export default function UploadPage() {
     })
   }
 
+  const uploadFile = async (file: File): Promise<{ id: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (subject) formData.append('subject', subject)
+    if (topic) formData.append('topic', topic)
+
+    const res = await fetch('/api/imports/upload', {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!res.ok) {
+      let message = `Upload failed (${res.status})`
+      try {
+        const body = await res.json()
+        if (body?.error) message = body.error
+      } catch {
+        // response wasn't JSON — keep the generic message
+      }
+      throw new Error(message)
+    }
+
+    return res.json()
+  }
+
   const handleUpload = async () => {
     const validFiles = files.filter((f) => !f.error)
     if (validFiles.length === 0) {
@@ -126,42 +151,35 @@ export default function UploadPage() {
     setUploading(true)
     setError(null)
 
-    try {
-      for (const uploadedFile of validFiles) {
-        const file = uploadedFile.file
+    // Upload one at a time so a single failure doesn't abort the rest,
+    // and errors can be attributed to the right file.
+    let firstImportId: string | null = null
+    const failures: string[] = []
 
-        // Create FormData with actual file bytes
-        const formData = new FormData()
-        formData.append('file', file)
-        if (subject) formData.append('subject', subject)
-        if (topic) formData.append('topic', topic)
-
-        const response = await fetch('/api/imports/upload', {
-          method: 'POST',
-          body: formData,
-        })
-
-        const data = await response.json()
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Upload failed')
-        }
-
-        // Redirect to review page for the first successful import
-        if (data.importId) {
-          router.push(`/ai-studio/review/${data.importId}`)
-          return
-        }
+    for (const uploadedFile of validFiles) {
+      try {
+        const result = await uploadFile(uploadedFile.file)
+        if (!firstImportId) firstImportId = result.id
+      } catch (err) {
+        failures.push(
+          `${uploadedFile.file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`
+        )
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
-      setUploading(false)
+    }
+
+    setUploading(false)
+
+    if (failures.length > 0) {
+      setError(failures.join(' | '))
+    }
+    if (firstImportId) {
+      router.push(`/ai-studio/review/${firstImportId}`)
     }
   }
 
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase()
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(ext || '')) {
+    if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(ext || '')) {
       return <Image className="h-5 w-5 text-blue-500" />
     }
     return <FileText className="h-5 w-5 text-orange-500" />
@@ -233,7 +251,7 @@ export default function UploadPage() {
               </label>
             </Button>
             <p className="text-xs text-muted-foreground mt-4">
-              Max file size: 25MB • {(ACCEPTED_TYPES[type] || ACCEPTED_TYPES.all).join(', ')}
+              Max file size: 50MB • {(ACCEPTED_TYPES[type] || ACCEPTED_TYPES.all).join(', ')}
             </p>
           </div>
         </CardContent>

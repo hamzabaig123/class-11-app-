@@ -1,5 +1,5 @@
-import OpenAI from 'openai'
 import { z } from 'zod'
+import { getAIClient, TEXT_MODEL } from './client'
 
 const MCQSchema = z.object({
   question_text: z.string().min(1).max(5000),
@@ -18,23 +18,6 @@ const MCQSchema = z.object({
 const StructuringResultSchema = z.array(MCQSchema)
 
 export type MCQ = z.infer<typeof MCQSchema>
-
-// Lazy-init OpenAI client (OpenRouter-compatible) to avoid build-time errors
-let _client: OpenAI | null = null
-
-function getClient(): OpenAI {
-  if (!_client) {
-    _client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || '',
-      baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': process.env.NEXTAUTH_URL || 'http://localhost:3000',
-        'X-Title': 'MCQ Master',
-      },
-    })
-  }
-  return _client
-}
 
 const SYSTEM_PROMPT = `You are extracting multiple-choice questions from raw OCR/text-extracted content.
 Return ONLY a JSON object with a "mcqs" array. Each element MUST match this schema exactly:
@@ -72,13 +55,13 @@ export async function structureText(
     return { mcqs: [], warnings: ['Input text too short for extraction'] }
   }
 
-  const model = process.env.OPENAI_MODEL || 'google/gemini-2.0-flash-001'
+  const model = TEXT_MODEL
   const chunks = chunkText(text, 3000)
   const allMcqs: MCQ[] = []
 
   for (const chunk of chunks) {
     try {
-      const response = await getClient().chat.completions.create({
+      const response = await getAIClient().chat.completions.create({
         model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
@@ -119,10 +102,10 @@ export async function generateMCQs(
   count: number
 ): Promise<{ mcqs: MCQ[]; warnings: string[] }> {
   const warnings: string[] = []
-  const model = process.env.OPENAI_MODEL || 'google/gemini-2.0-flash-001'
+  const model = TEXT_MODEL
 
   try {
-    const response = await getClient().chat.completions.create({
+    const response = await getAIClient().chat.completions.create({
       model,
       messages: [
         { role: 'system', content: GENERATION_PROMPT },

@@ -176,7 +176,7 @@ export default function GeneratePage() {
       await aiGenerate.mutateAsync({
         subject: effectiveSubject!,
         topic: activeTab === 'topic' ? topic : notes,
-        difficulty,
+        difficulty: (difficulty === 'MIXED' ? 'MEDIUM' : difficulty) as 'EASY' | 'MEDIUM' | 'HARD',
         count: questionCount[0],
       })
     } catch {

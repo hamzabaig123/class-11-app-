@@ -410,7 +410,7 @@ export const practiceRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const question = await prisma.question.findFirst({
         where: { id: input.questionId, userId: ctx.user.id },
-        include: { answer: true },
+        include: { answer: true, options: true },
       })
 
       if (!question) {
@@ -429,7 +429,7 @@ export const practiceRouter = createTRPCRouter({
 Question: ${question.text}
 
 Options:
-${question.options.map((o, i) => String.fromCharCode(65 + i) + ': ' + o.text).join('\n')}
+${question.options.map((o: any, i: number) => String.fromCharCode(65 + i) + ': ' + o.text).join('\n')}
 
 Correct answer: ${String.fromCharCode(65 + question.answer.correctLabel.charCodeAt(0))}
 
@@ -445,7 +445,7 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
       const llmResponse = await callLLM(llmReq)
 
       if (!llmResponse.success) {
-        throw new TRPCError({ code: 'INTERNAL_ERROR', message: llmResponse.error || 'LLM call failed' })
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: llmResponse.error || 'LLM call failed' })
       }
 
       // Update the question answer and question explanation in a transaction

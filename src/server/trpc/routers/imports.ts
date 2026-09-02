@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { createTRPCRouter, protectedProcedure } from '../init'
 import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
+import { runImportPipeline } from '@/lib/ai-studio/pipeline'
 
 export const importsRouter = createTRPCRouter({
   // Create a new import — starts extraction+structuring pipeline
@@ -24,7 +25,7 @@ export const importsRouter = createTRPCRouter({
           fileType: input.fileType,
           sourceType: input.sourceType,
           status: 'queued',
- },
+        },
       }).catch((error: any) => {
         // Foreign key violation means the user no longer exists in the DB
         // (e.g. DB reset/reseed). Force re-authentication.
@@ -37,18 +38,16 @@ export const importsRouter = createTRPCRouter({
         throw error
       })
 
-      // Run processing (sync for now; in production: background job)
-      processImport(importRecord.id, ctx.user.id, input.sourceType, input.subject, input.topic, input.text)
-        .catch(async (error) => {
-          await prisma.import.update({
-            where: { id: importRecord.id },
-            data: {
-              status: 'failed',
-              errorReason: error instanceof Error ? error.message : 'Processing failed',
-              errorMessage: error instanceof Error ? error.stack : undefined,
-            },
-          })
-        })
+      // Run processing (fire-and-forget; frontend polls getStatus for progress).
+      // Note: for actual PDF/DOCX/image *files*, use POST /api/imports/upload
+      // instead — this mutation only has the pasted `text`, not file bytes.
+      runImportPipeline(importRecord.id, {
+        sourceType: input.sourceType,
+        fileName: input.fileName,
+        text: input.text,
+        subject: input.subject,
+        topic: input.topic,
+      })
 
       return { id: importRecord.id }
     }),
@@ -62,27 +61,27 @@ export const importsRouter = createTRPCRouter({
       })
       if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
 
-      // If import has persisted extractedText, we can retry without re-upload
-      // by passing extractedText from the import record
-      const hasExtractedText =
-        importRecord.status === 'needs_manual' ||
-        (importRecord.status === 'pending_review' && importRecord.progressStep?.includes('Ready'))
+      // We only have something to retry with if text was previously extracted
+      // and stored, or this was an ai_generated import. File-based imports
+      // (pdf/docx/image) that never got that far need the file re-uploaded —
+      // the original bytes were never persisted.
+      if (!importRecord.extractedText && importRecord.sourceType !== 'ai_generated') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Nothing to retry — please re-upload the file to try again.',
+        })
+      }
 
       await prisma.import.update({
         where: { id: input.id },
         data: { status: 'queued', retryCount: { increment: 1 }, errorReason: null, errorMessage: null },
       })
 
-      // For needs_manual imports, we still need the original file/text
-      // In a full implementation, the original file would be stored securely
-      // and re-fetched here. For now, we'll attempt processing with
-      // the existing extractedText if available.
-      const importData = await prisma.import.findFirst({
-        where: { id: input.id },
-        select: { extractedText: true, sourceType: true, status: true },
+      runImportPipeline(importRecord.id, {
+        sourceType: importRecord.sourceType,
+        fileName: importRecord.fileName,
+        text: importRecord.extractedText || undefined,
       })
-
-      await processImport(input.id, ctx.user.id, importData?.sourceType || 'pdf', undefined, undefined, importData?.extractedText)
 
       return { success: true }
     }),
@@ -110,6 +109,7 @@ export const importsRouter = createTRPCRouter({
         sourceType: importRecord.sourceType,
         status: importRecord.status,
         errorReason: importRecord.errorReason,
+        errorMessage: importRecord.errorMessage,
         progressStep: importRecord.progressStep,
         retryCount: importRecord.retryCount,
         totalQuestions: importRecord.totalQuestions,
@@ -381,6 +381,18 @@ export const importsRouter = createTRPCRouter({
         const { generateMCQs } = await import('@/lib/ai-studio/structuring')
         const { mcqs, warnings } = await generateMCQs(input.subject, input.topic, input.difficulty, input.count)
 
+        if (mcqs.length === 0) {
+          await prisma.import.update({
+            where: { id: importRecord.id },
+            data: {
+              status: 'failed',
+              errorReason: warnings[0] || 'AI generation returned no questions',
+              completedAt: new Date(),
+            },
+          })
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: warnings[0] || 'AI generation returned no questions' })
+        }
+
         for (const mcq of mcqs) {
           await prisma.importedQuestion.create({
             data: {
@@ -405,7 +417,7 @@ export const importsRouter = createTRPCRouter({
             status: 'pending_review',
             totalQuestions: mcqs.length,
             pendingCount: mcqs.length,
-            progressStep: 'Ready for review',
+            progressStep: warnings.length ? `Ready for review (${warnings.length} warning(s))` : 'Ready for review',
             completedAt: new Date(),
           },
         })
@@ -420,89 +432,3 @@ export const importsRouter = createTRPCRouter({
       }
     }),
 })
-
-// Helper: process an import (extraction → structuring → staging)
-async function processImport(
-  importId: string,
-  userId: string,
-  sourceType: string,
-  subject?: string,
-  topic?: string,
-  text?: string
-) {
-  // Step 1: Extraction (skip for AI-generated)
-  if (sourceType !== 'ai_generated') {
-    const extractResult = await import('@/lib/ai-studio/extraction').then((mod) => mod.extractText)
-
-    // For now, use the text parameter if provided; in production this would fetch from object storage
-    let extractionText = text
-    let extractionWarnings: string[] = []
-
-    // If no text provided, try to determine from source type
-    if (!extractionText || extractionText.trim().length < 30) {
-      // No extractable text available
-      await prisma.import.update({
-        where: { id: importId },
-        data: {
-          status: 'needs_manual',
-          progressStep: 'No text extracted — manual entry required',
-          completedAt: new Date(),
-        },
-      })
-      return
-    }
-
-    // Normalize extraction
-    if (extractionText && typeof extractionText === 'string') {
-      // Normalize line endings and collapse unsafe whitespace
-      extractionText = extractionText.replace(/\r\n|\r/g, '\n').replace(/[\n]{3,}/g, '\n').trim()
-      extractionWarnings = []
-    }
-
-    // Step 2: Structuring
-    await prisma.import.update({
-      where: { id: importId },
-      data: { status: 'structuring', progressStep: 'Structuring questions with AI...' },
-    })
-
-    const { structureText } = await import('@/lib/ai-studio/structuring')
-    const { mcqs, warnings: structuringWarnings } = await structureText(
-      extractionText,
-      subject,
-      topic
-    )
-
-    // Merge warnings
-    const allWarnings = [...extractionWarnings, ...structuringWarnings]
-
-    for (const mcq of mcqs) {
-      await prisma.importedQuestion.create({
-        data: {
-          importId,
-          questionText: mcq.question_text,
-          options: JSON.stringify(mcq.options),
-          correctLabel: mcq.correct_option,
-          explanation: mcq.explanation,
-          difficulty: 'MEDIUM',
-          subjectName: subject,
-          topicName: topic,
-          status: 'pending',
-          confidence: mcq.confidence,
-          warnings: JSON.stringify(allWarnings),
-          rawSnippet: extractionText?.slice(0, 500) || '',
-        },
-      })
-    }
-
-    await prisma.import.update({
-      where: { id: importId },
-      data: {
-        status: 'pending_review',
-        totalQuestions: mcqs.length,
-        pendingCount: mcqs.length,
-        progressStep: 'Ready for review',
-        completedAt: new Date(),
-      },
-    })
-  }
-}

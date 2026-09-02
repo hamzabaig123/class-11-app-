@@ -32,7 +32,7 @@ export default function ReviewPage() {
   )
 
   const { data: candidates, refetch: refetchCandidates, isLoading: isLoadingCandidates } = trpc.imports.reviewList.useQuery(
-    { importId, status: activeTab },
+    { importId, status: (['pending', 'approved', 'rejected'].includes(activeTab) ? activeTab as 'pending' | 'approved' | 'rejected' : undefined) },
     { enabled: !!importData && TERMINAL_STATUSES.includes(importData.status) }
   )
 
