@@ -41,7 +41,7 @@ export default function NewSourcePage() {
     if (!title.trim()) return
     createMutation.mutate({
       title: title.trim(),
-      sourceType,
+      sourceType: sourceType as any,
       author: author.trim() || undefined,
       edition: edition.trim() || undefined,
       publisher: publisher.trim() || undefined,

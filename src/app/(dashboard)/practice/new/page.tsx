@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Play, Clock, Brain, Target, BookOpen, Shuffle, ChevronRight, Zap, Award, AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { trpc } from '@/lib/trpc'
 import { toast } from '@/components/ui/use-toast'
 
-type PracticeMode = 'QUICK' | 'TOPIC' | 'MISTAKES' | 'REVIEW' | 'MOCK' | 'COLLECTION'
+type PracticeMode = 'QUICK' | 'SUBJECT' | 'MISTAKES' | 'REVIEW' | 'MOCK' | 'COLLECTION'
 type Step = 1 | 2 | 3 | 4
 
 export default function PracticeSetupPage() {
@@ -35,7 +35,7 @@ export default function PracticeSetupPage() {
 
   const handleStart = () => {
     createSession.mutate({
-      mode,
+      mode: mode === 'MISTAKES' ? 'WEAK' : mode === 'SUBJECT' ? 'SUBJECT' : mode,
       subjectId: subjectId || undefined,
       chapterId: chapterId || undefined,
       difficulty: difficulty as any,
@@ -46,7 +46,7 @@ export default function PracticeSetupPage() {
   }
 
   const canProceed = () => {
-    if (step === 1) return mode === 'QUICK' || mode === 'MISTAKES' || mode === 'REVIEW' || (mode === 'TOPIC' && subjectId)
+    if (step === 1) return mode === 'QUICK' || mode === 'MISTAKES' || mode === 'REVIEW' || (mode === 'SUBJECT' && subjectId)
     return true
   }
 
@@ -57,24 +57,20 @@ export default function PracticeSetupPage() {
         <p className="text-muted-foreground">Configure your practice session</p>
       </div>
 
-      {/* Step Indicator */}
       <div className="flex items-center gap-2">
         {[1, 2, 3, 4].map(s => (
           <div key={s} className={`flex-1 h-1 rounded-full ${s <= step ? 'bg-burgundy-600' : 'bg-muted'}`} />
         ))}
       </div>
 
-      {/* Step 1: Choose Content */}
       {step === 1 && (
         <Card>
-          <CardHeader>
-            <CardTitle>Choose Content</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Choose Content</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {[
                 { id: 'QUICK', label: 'Quick Practice', desc: 'Random questions', icon: Zap },
-                { id: 'TOPIC', label: 'Topic Practice', desc: 'Specific subject/topic', icon: Target },
+                { id: 'SUBJECT', label: 'Topic Practice', desc: 'Specific subject/topic', icon: Target },
                 { id: 'MISTAKES', label: 'Review Mistakes', desc: 'Wrong answers', icon: AlertTriangle },
                 { id: 'REVIEW', label: 'Due Review', desc: 'Scheduled revision', icon: Clock },
                 { id: 'MOCK', label: 'Mock Test', desc: 'Timed exam', icon: Award },
@@ -92,7 +88,7 @@ export default function PracticeSetupPage() {
               ))}
             </div>
 
-            {(mode === 'TOPIC') && (
+            {mode === 'SUBJECT' && (
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <Label>Subject</Label>
@@ -118,12 +114,9 @@ export default function PracticeSetupPage() {
         </Card>
       )}
 
-      {/* Step 2: Configure */}
       {step === 2 && (
         <Card>
-          <CardHeader>
-            <CardTitle>Configure Session</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Configure Session</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -156,12 +149,9 @@ export default function PracticeSetupPage() {
         </Card>
       )}
 
-      {/* Step 3: Review & Start */}
       {step >= 3 && (
         <Card>
-          <CardHeader>
-            <CardTitle>Ready to Start</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Ready to Start</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 p-4 rounded-lg bg-muted/50">
               <div className="flex justify-between"><span className="text-sm text-muted-foreground">Mode:</span><span className="text-sm font-medium">{mode}</span></div>
@@ -178,7 +168,6 @@ export default function PracticeSetupPage() {
         </Card>
       )}
 
-      {/* Navigation */}
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => setStep(Math.max(1, step - 1) as Step)} disabled={step === 1}>
           Back

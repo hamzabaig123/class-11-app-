@@ -29,15 +29,15 @@ export default function RevisionPage() {
   }, [dueItems, filter])
 
   const startSession = trpc.revision.startSession.useMutation({
-    onSuccess: (session) => {
+    onSuccess: (session: any) => {
       toast({ title: 'Review session started' })
     },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   })
 
   const handleStartReview = () => {
     const questionIds = filteredItems.map((i: any) => i.questionId)
-    startSession.mutate({ questionIds, title: 'Due Review', type: 'REVISION' })
+    startSession.mutate({ questionIds, title: 'Due Review' })
   }
 
   const totalDue = dueItems?.length ?? 0

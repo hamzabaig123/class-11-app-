@@ -65,13 +65,39 @@ export const appRouter = createTRPCRouter({
       const totalAttempts = attemptsAgg.reduce((s, a) => s + a._count, 0)
       const correctAttempts = attemptsAgg.find(a => a.isCorrect)?._count ?? 0
       const accuracy = totalAttempts > 0 ? (correctAttempts / totalAttempts) * 100 : null
+
+      // Compute weak topics from attempts
+      const questionsWithAttempts = await prisma.question.findMany({
+        where: { userId, status: 'ACTIVE' },
+        select: {
+          id: true,
+          subjectId: true,
+          topicId: true,
+          attempts: { select: { isCorrect: true } },
+        },
+      })
+      const topicStats: Record<string, { id: string; name: string; total: number; correct: number }> = {}
+      for (const q of questionsWithAttempts) {
+        if (!q.topicId) continue
+        if (!topicStats[q.topicId]) {
+          topicStats[q.topicId] = { id: q.topicId, name: '', total: 0, correct: 0 }
+        }
+        topicStats[q.topicId].total += q.attempts.length
+        topicStats[q.topicId].correct += q.attempts.filter(a => a.isCorrect).length
+      }
+      const weakTopics = Object.values(topicStats)
+        .map(s => ({ ...s, weaknessScore: s.total > 0 ? 1 - (s.correct / s.total) : 0 }))
+        .filter(s => s.total >= 3)
+        .sort((a, b) => b.weaknessScore - a.weaknessScore)
+        .slice(0, 5)
+
       return {
         user: { displayName: ctx.user.name ?? 'User', initials: ctx.user.name ? ctx.user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U' },
         questionCount, masteredCount, accuracy, attemptedCount: totalAttempts, dueTodayCount: dueToday,
         studyStreakDays: streak,
-        studyTimeSeconds: studyTime._sum?.elapsedSeconds ?? 0,
+        studyTimeSeconds: Math.floor((studyTime._sum?.elapsedSeconds ?? 0) / 1000),
         unfinishedSession: unfinished ? { id: unfinished.id, currentIndex: unfinished.currentIndex, totalQuestions: unfinished.questionCount, title: unfinished.title ?? 'Practice Session' } : null,
-        subjects, recentActivity: activity.map(a => ({ ...a, occurredAt: a.createdAt.toISOString() })),
+        subjects, weakTopics, recentActivity: activity.map(a => ({ ...a, occurredAt: a.createdAt.toISOString() })),
         onboardingComplete: !!settings,
         today: { attemptedCount: todayAttempts, correctCount: todayCorrect, studySeconds: todayStudy, accuracy: todayAttempts > 0 ? Math.round((todayCorrect / todayAttempts) * 100) : null },
         settings: settings ? { dailyQuestionGoal: settings.dailyQuestionGoal, dailyMinuteGoal: settings.dailyMinuteGoal, timezone: settings.timezone, masteryThreshold: settings.masteryThreshold } : { dailyQuestionGoal: null, dailyMinuteGoal: null, timezone: null, masteryThreshold: null },
@@ -261,6 +287,11 @@ export const appRouter = createTRPCRouter({
       const items = await prisma.reviewItem.findMany({ where: { userId: ctx.user.id, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] }, nextReviewAt: { lte: now } }, include: { question: { include: { options: { orderBy: { position: 'asc' } }, answer: true, subject: { select: { id: true, name: true, color: true } }, topic: { select: { id: true, name: true } }, chapter: { select: { id: true, name: true } } } } }, orderBy: { nextReviewAt: 'asc' } })
       return items.map(item => ({ ...item, question: item.question }))
     }),
+    startSession: protectedProcedure.input(z.object({ questionIds: z.array(z.string()), title: z.string().optional() })).mutation(async ({ ctx, input }) => {
+      const session = await prisma.practiceSession.create({ data: { userId: ctx.user.id, title: input.title, questionCount: input.questionIds.length } })
+      await prisma.practiceSessionQuestion.createMany({ data: input.questionIds.map((questionId, index) => ({ sessionId: session.id, questionId, position: index })) })
+      return session
+    }),
   }),
 
   imports: importsRouter,
@@ -360,7 +391,7 @@ export const appRouter = createTRPCRouter({
     }),
     bySubject: protectedProcedure.input(z.object({ from: z.string().optional(), to: z.string().optional(), timezone: z.string().optional() })).query(async ({ ctx, input }) => {
       const userId = ctx.user.id; const subjects = await prisma.subject.findMany({ where: { userId, status: 'ACTIVE' }, orderBy: { position: 'asc' }, include: { _count: { select: { questions: true } } } })
-      const result = await Promise.all(subjects.map(async (s) => { const qs = await prisma.question.findMany({ where: { subjectId: s.id, userId, status: 'ACTIVE' }, select: { id: true } }); const qids = qs.map(q => q.id); const atts = await prisma.attempt.findMany({ where: { questionId: { in: qids }, userId }, select: { isCorrect: true } }); const total = atts.length; const correct = atts.filter(a => a.isCorrect).length; const accuracy = total > 0 ? (correct / total) * 100 : null; return { subjectId: s.id, subjectName: s.name, attempts: total, correct, accuracy, questionsAttempted: new Set(atts.map(a => a.questionId)).size, trend: accuracy !== null ? 'stable' as const : 'no-data' as const } }))
+      const result = await Promise.all(subjects.map(async (s) => { const qs = await prisma.question.findMany({ where: { subjectId: s.id, userId, status: 'ACTIVE' }, select: { id: true } }); const qids = qs.map(q => q.id); const atts = await prisma.attempt.findMany({ where: { questionId: { in: qids }, userId }, select: { isCorrect: true, questionId: true } }); const total = atts.length; const correct = atts.filter(a => a.isCorrect).length; const accuracy = total > 0 ? (correct / total) * 100 : null; return { subjectId: s.id, subjectName: s.name, attempts: total, correct, accuracy, questionsAttempted: new Set(atts.map(a => a.questionId)).size, trend: accuracy !== null ? 'stable' as const : 'no-data' as const } }))
       return result.filter(s => s.attempts > 0)
     }),
     byChapter: protectedProcedure.input(z.object({ from: z.string().optional(), to: z.string().optional(), subjectId: z.string().optional(), timezone: z.string().optional() })).query(async ({ ctx, input }) => {

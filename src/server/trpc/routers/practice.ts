@@ -236,6 +236,7 @@ export const practiceRouter = createTRPCRouter({
       const safeQuestions = session.practiceQuestions.map(pq => ({
         id: pq.question.id,
         text: pq.question.text,
+        explanation: pq.question.explanation,
         hint: pq.question.hint,
         difficulty: pq.question.difficulty,
         subject: pq.question.subject,

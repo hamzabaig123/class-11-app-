@@ -321,34 +321,33 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* Weak Topics */}
-      {data.weakTopics && data.weakTopics.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Award className="h-5 w-5" />Weak Areas</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {data.weakTopics.map(topic => (
-                <div key={topic.id} className="p-4 rounded-lg border bg-red-50/50 border-red-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-sm">{topic.name}</span>
-                    <span className="text-xs font-medium text-red-600 bg-red-100 px-2 py-0.5 rounded">
-                      {Math.round(topic.weaknessScore * 100)}% weak
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    {topic.total} attempts · {Math.round(topic.weaknessScore * 100)}% accuracy
-                  </p>
-                  <Button size="sm" variant="outline" className="w-full" onClick={() => handlePracticeWeakTopic(topic.id)}>
-                    <Target className="h-3 w-3 mr-1" />Practice This Topic
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              {data.weakTopics && data.weakTopics.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Award className="h-5 w-5" />Weak Areas</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {data.weakTopics.map((topic: any) => (
+                        <div key={topic.id} className="p-4 rounded-lg border bg-red-50/50 border-red-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-sm">{topic.name || topic.id}</span>
+                            <span className="text-xs font-medium text-red-600 bg-red-100 px-2 py-0.5 rounded">
+                              {Math.round(topic.weaknessScore * 100)}% weak
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-3">
+                            {topic.total} attempts
+                          </p>
+                          <Button size="sm" variant="outline" className="w-full" onClick={() => handlePracticeWeakTopic(topic.id)}>
+                            <Target className="h-3 w-3 mr-1" />Practice This Topic
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
       {/* Recent Activity */}
       <Card>
