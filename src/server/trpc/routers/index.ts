@@ -10,6 +10,7 @@ import { bookmarksRouter } from './bookmarks'
 import { searchRouter } from './search'
 import { contentImportsRouter } from './contentImports'
 import { qaRouter } from './qa'
+import { adminQARouter } from './adminQA'
 import { logActivity, getUserTimezone, calculateStreak, getSubjectsWithStats } from './helpers'
 
 export const appRouter = createTRPCRouter({
@@ -113,6 +114,7 @@ export const appRouter = createTRPCRouter({
   bookmarks: bookmarksRouter,
   search: searchRouter,
   qa: qaRouter,
+  adminQA: adminQARouter,
 
   topics: createTRPCRouter({
     list: protectedProcedure.input(z.object({ subjectId: z.string() })).query(async ({ ctx, input }) => {
