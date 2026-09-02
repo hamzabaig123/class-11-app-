@@ -13,13 +13,18 @@ export default function AIStudioPage() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'PROCESSING':
+      case 'queued':
+      case 'extracting':
+      case 'structuring':
         return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-      case 'COMPLETED':
+      case 'pending_review':
+      case 'structured_ok':
         return <CheckCircle2 className="h-4 w-4 text-green-500" />
-      case 'FAILED':
+      case 'failed':
+      case 'structuring_failed':
         return <XCircle className="h-4 w-4 text-red-500" />
-      case 'PENDING':
+      case 'uploaded':
+      case 'extracted':
         return <Clock className="h-4 w-4 text-yellow-500" />
       default:
         return <AlertCircle className="h-4 w-4 text-gray-500" />
@@ -28,14 +33,22 @@ export default function AIStudioPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'PROCESSING':
-        return <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />Processing</Badge>
-      case 'COMPLETED':
-        return <Badge variant="default" className="bg-green-500">Completed</Badge>
-      case 'FAILED':
+      case 'queued':
+        return <Badge variant="secondary">Queued</Badge>
+      case 'extracting':
+        return <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />Extracting</Badge>
+      case 'structuring':
+        return <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />Structuring</Badge>
+      case 'pending_review':
+      case 'structured_ok':
+        return <Badge variant="default" className="bg-green-500">Ready for Review</Badge>
+      case 'failed':
+      case 'structuring_failed':
         return <Badge variant="destructive">Failed</Badge>
-      case 'PENDING':
-        return <Badge variant="secondary">Pending</Badge>
+      case 'uploaded':
+        return <Badge variant="outline">Uploaded</Badge>
+      case 'extracted':
+        return <Badge variant="outline">Extracted</Badge>
       default:
         return <Badge variant="outline">{status}</Badge>
     }

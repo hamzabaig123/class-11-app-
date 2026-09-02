@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { createTRPCRouter, protectedProcedure } from '../init'
 import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
+import { callLLM, MCQExplanationSchema } from '@/lib/llmService'
 
 export const practiceRouter = createTRPCRouter({
   createSession: protectedProcedure
@@ -404,6 +405,75 @@ export const practiceRouter = createTRPCRouter({
       })
     }),
 
+  regenerateExplanation: protectedProcedure
+    .input(z.object({ questionId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const question = await prisma.question.findFirst({
+        where: { id: input.questionId, userId: ctx.user.id },
+        include: { answer: true },
+      })
+
+      if (!question) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Question not found' })
+      }
+
+      if (!question.answer) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Question has no answer key' })
+      }
+
+      // Call LLM to generate explanation
+      const llmReq: any = {
+        purpose: 'explanation',
+        prompt: `Generate a clear, educational explanation for this multiple-choice question:
+
+Question: ${question.text}
+
+Options:
+${question.options.map((o, i) => String.fromCharCode(65 + i) + ': ' + o.text).join('\n')}
+
+Correct answer: ${String.fromCharCode(65 + question.answer.correctLabel.charCodeAt(0))}
+
+Please provide:
+1. A concise explanation of the correct answer
+2. Brief notes on why each incorrect option is wrong
+
+Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B": "string", "C": "string", "D": "string"}}`,
+        userId: ctx.user.id,
+        schema: MCQExplanationSchema,
+      }
+
+      const llmResponse = await callLLM(llmReq)
+
+      if (!llmResponse.success) {
+        throw new TRPCError({ code: 'INTERNAL_ERROR', message: llmResponse.error || 'LLM call failed' })
+      }
+
+      // Update the question answer and question explanation in a transaction
+      await prisma.$transaction(async (tx) => {
+        // Update QuestionAnswer explanation
+        await tx.questionAnswer.update({
+          where: { questionId: input.questionId },
+          data: { explanation: llmResponse.data.explanation },
+        })
+
+        // Update Question explanation and source
+        await tx.question.update({
+          where: { id: input.questionId },
+          data: {
+            explanation: llmResponse.data.explanation,
+            explanationGeneratedAt: new Date(),
+            explanationSource: 'ai_generated',
+          },
+        })
+      })
+
+      return {
+        success: true,
+        explanation: llmResponse.data.explanation,
+        source: 'ai_generated',
+      }
+    }),
+
   skip: protectedProcedure
     .input(z.object({
       sessionId: z.string(),
@@ -619,7 +689,31 @@ export const practiceRouter = createTRPCRouter({
 
       return { success: true }
     }),
-})
+});
+
+  // GET weak topics for a user — returns topics sorted by weaknessScore desc
+  getWeakTopics: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(50).default(10) }))
+    .query(async ({ ctx, input }) => {
+      const { limit } = input
+
+      const topicPerformance = await prisma.topicPerformance.findMany({
+        where: { userId: ctx.user.id },
+        include: { topic: { select: { id: true, name: true, subject: { select: { name: true } } } } },
+        orderBy: { weaknessScore: 'desc' },
+        take: limit,
+      })
+
+      return topicPerformance.map(tp => ({
+        id: tp.topic.id,
+        name: tp.topic.name,
+        subject: tp.topic.subject?.name,
+        correctCount: tp.correctCount,
+        incorrectCount: tp.incorrectCount,
+        weaknessScore: tp.weaknessScore,
+        lastAttemptedAt: tp.lastAttemptedAt,
+      }))
+    }),
 
 async function updateReviewItem(
   tx: any,

@@ -20,6 +20,8 @@ import {
   X,
   Target,
   Flame,
+  Plus,
+  Gauge,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -46,6 +48,134 @@ interface SidebarContentProps {
   collapsed: boolean
   onToggleCollapse: () => void
   onNavClick?: () => void
+}
+
+function SidebarGoalCard() {
+  const router = useRouter()
+  const { data: summary } = trpc.dashboard.summary.useQuery()
+
+  const DEFAULT_DAILY_GOAL = 20
+  const goal = summary?.settings?.dailyQuestionGoal ?? DEFAULT_DAILY_GOAL
+  const todayAttempted = summary?.today?.attemptedCount ?? 0
+  const todayStudyMin = Math.floor((summary?.today?.studySeconds ?? 0) / 60)
+  const minuteGoal = summary?.settings?.dailyMinuteGoal ?? null
+
+  const progress = Math.min((todayAttempted / Math.max(goal, 1)) * 100, 100)
+  const hasSetGoal = !!summary?.settings?.dailyQuestionGoal || !!summary?.settings?.dailyMinuteGoal
+
+  if (!hasSetGoal) {
+    return (
+      <div
+        className="rounded-lg border border-dashed border-burgundy-300/50 bg-burgundy-50 dark:bg-burgundy-900/10 p-3 space-y-2 cursor-pointer hover:bg-burgundy-100/70 transition-colors"
+        onClick={() => router.push('/settings?tab=study')}
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-burgundy-600/10">
+            <Gauge className="h-4 w-4 text-burgundy-700" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-burgundy-700">Set a daily goal</p>
+            <p className="text-[11px] text-burgundy-700/80">
+              Consistency builds retention.
+            </p>
+          </div>
+        </div>
+        <Button size="sm" variant="outline" className="w-full h-7 text-xs">
+          <Plus className="h-3 w-3 mr-1.5" />
+          Set today's goal
+        </Button>
+      </div>
+    )
+  }
+
+  const isComplete = todayAttempted >= goal
+
+  return (
+    <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground font-medium">Today's Goal</span>
+        <span
+          className={cn(
+            'font-semibold tabular-nums',
+            isComplete ? 'text-green-600 dark:text-green-500' : 'text-foreground'
+          )}
+        >
+          {todayAttempted}/{goal}
+        </span>
+      </div>
+      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+        <div
+          className={cn(
+            'h-full rounded-full transition-all duration-500',
+            isComplete ? 'bg-green-500' : 'bg-burgundy-600'
+          )}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ClockIcon className="h-3 w-3" />
+          <span>
+            {todayStudyMin}
+            {minuteGoal ? `/${minuteGoal}` : ''} min
+          </span>
+        </div>
+        {isComplete ? (
+          <span className="text-[10px] font-medium text-green-600 dark:text-green-500 flex items-center gap-1">
+            <CheckCircleMiniIcon className="h-3 w-3" />
+            Done
+          </span>
+        ) : (
+          <button
+            onClick={() => router.push('/practice/new')}
+            className="text-[11px] font-medium text-burgundy-700 hover:underline"
+          >
+            Start practice →
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ClockIcon(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  )
+}
+
+function CheckCircleMiniIcon(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  )
 }
 
 function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarContentProps) {
@@ -162,20 +292,7 @@ function SidebarContent({ collapsed, onToggleCollapse, onNavClick }: SidebarCont
       {/* Footer */}
       <div className="border-t p-3 space-y-2">
         {/* Mini Daily Goal Card */}
-        {!collapsed && (
-          <div className="rounded-lg bg-muted/50 p-3 space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground font-medium">Today's Goal</span>
-              <span className="text-muted-foreground">{summary?.attemptedCount ?? 0}/{summary?.questionCount ?? 20}</span>
-            </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-burgundy-600 rounded-full transition-all"
-                style={{ width: `${Math.min(((summary?.attemptedCount ?? 0) / Math.max(summary?.questionCount ?? 20, 1)) * 100, 100)}%` }}
-              />
-            </div>
-          </div>
-        )}
+        {!collapsed && <SidebarGoalCard />}
 
         {/* Streak */}
         {!collapsed && streak > 0 && (

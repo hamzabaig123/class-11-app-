@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Upload, FileText, Image, X, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Upload, FileText, Image, X, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -124,6 +124,25 @@ export default function UploadPage() {
     })
   }
 
+  const extractTextFromFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const text = e.target?.result as string
+        resolve(text || '')
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      
+      if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+        reader.readAsText(file)
+      } else {
+        // For PDF/DOCX, we'd need client-side libraries
+        // For now, show a message
+        reject(new Error('Only .txt files supported in browser upload. Use API for PDF/DOCX.'))
+      }
+    })
+  }
+
   const handleUpload = async () => {
     const validFiles = files.filter((f) => !f.error)
     if (validFiles.length === 0) {
@@ -137,11 +156,28 @@ export default function UploadPage() {
     try {
       for (const uploadedFile of validFiles) {
         const file = uploadedFile.file
-        await createImport.mutateAsync({
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type || file.name.split('.').pop() || 'unknown',
-        })
+        
+        // Extract text for TXT files client-side
+        if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+          const text = await extractTextFromFile(file)
+          await createImport.mutateAsync({
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type || 'text/plain',
+            sourceType: 'txt',
+            text,
+          })
+        } else {
+          // For PDF/DOCX - in production would upload to S3 then process
+          // For now, register the import and process server-side
+          await createImport.mutateAsync({
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type || file.name.split('.').pop() || 'unknown',
+            sourceType: file.name.endsWith('.pdf') ? 'pdf' : 
+                       file.name.endsWith('.docx') ? 'docx' : 'txt',
+          })
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')

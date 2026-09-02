@@ -9,7 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { trpc } from '@/lib/trpc'
 
-type ImportStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+type ImportStatus = 'uploaded' | 'queued' | 'extracting' | 'extracted' | 'structuring' | 'structured_ok' | 'structuring_failed' | 'pending_review' | 'needs_manual' | 'failed'
+
+const TERMINAL_STATUSES = ['pending_review', 'structured_ok', 'needs_manual', 'failed', 'structuring_failed']
+const PROCESSING_STATUSES = ['queued', 'extracting', 'extracting', 'structuring']
 
 export default function ReviewPage() {
   const router = useRouter()
@@ -19,17 +22,21 @@ export default function ReviewPage() {
   const [activeTab, setActiveTab] = useState('pending')
   const [selectedQuestions, setSelectedQuestions] = useState<Set<string>>(new Set())
 
+  // Poll while processing, stop when terminal
   const { data: importData, refetch: refetchImport, isLoading: isLoadingImport } = trpc.imports.getStatus.useQuery(
     { id: importId },
-    { refetchInterval: (data) => data?.status === 'PROCESSING' ? 2000 : false }
+    { refetchInterval: (data) => {
+      if (!data) return 2000
+      return TERMINAL_STATUSES.includes(data.status) ? false : 3000
+    }}
   )
 
   const { data: candidates, refetch: refetchCandidates, isLoading: isLoadingCandidates } = trpc.imports.reviewList.useQuery(
-    { importId, status: activeTab.toUpperCase() as any },
-    { enabled: !!importData && importData.status !== 'PROCESSING' }
+    { importId, status: activeTab },
+    { enabled: !!importData && TERMINAL_STATUSES.includes(importData.status) }
   )
 
-  const approveMutation = trpc.imports.approve.useMutation({
+  const approveOneMutation = trpc.imports.approveOne.useMutation({
     onSuccess: () => {
       refetchImport()
       refetchCandidates()
@@ -37,12 +44,24 @@ export default function ReviewPage() {
     },
   })
 
-  const rejectMutation = trpc.imports.reject.useMutation({
+  const rejectOneMutation = trpc.imports.rejectOne.useMutation({
     onSuccess: () => {
       refetchImport()
       refetchCandidates()
       setSelectedQuestions(new Set())
     },
+  })
+
+  const bulkApproveMutation = trpc.imports.bulkApprove.useMutation({
+    onSuccess: () => {
+      refetchImport()
+      refetchCandidates()
+      setSelectedQuestions(new Set())
+    },
+  })
+
+  const retryMutation = trpc.imports.retry.useMutation({
+    onSuccess: () => refetchImport(),
   })
 
   const handleSelectAll = () => {
@@ -67,11 +86,25 @@ export default function ReviewPage() {
   }
 
   const handleApprove = async (questionIds: string[]) => {
-    await approveMutation.mutateAsync({ importId, questionIds })
+    for (const id of questionIds) {
+      await approveOneMutation.mutateAsync({ id })
+    }
   }
 
   const handleReject = async (questionIds: string[]) => {
-    await rejectMutation.mutateAsync({ importId, questionIds })
+    for (const id of questionIds) {
+      await rejectOneMutation.mutateAsync({ id })
+    }
+  }
+
+  const handleBulkApprove = async () => {
+    if (confirm(`Approve all ${pendingCount} pending questions? This cannot be undone.`)) {
+      await bulkApproveMutation.mutateAsync({ importId })
+    }
+  }
+
+  const handleRetry = async () => {
+    await retryMutation.mutateAsync({ id: importId })
   }
 
   // Loading state while fetching import data
@@ -84,8 +117,76 @@ export default function ReviewPage() {
     )
   }
 
-  // Processing state - extraction in progress
-  if (importData.status === 'PROCESSING') {
+  // Processing state - extraction/structuring in progress
+  if (PROCESSING_STATUSES.includes(importData.status)) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.push('/ai-studio')}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Processing Import</h1>
+            <p className="text-muted-foreground">{importData.fileName}</p>
+          </div>
+        </div>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col items-center justify-center py-12 space-y-6">
+              <div className="relative">
+                <Loader2 className="h-16 w-16 animate-spin text-primary" />
+                <FileSearch className="h-8 w-8 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-primary/50" />
+              </div>
+              
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-semibold">
+                  {importData.status === 'extracting' ? 'Extracting Text' : 
+                   importData.status === 'structuring' ? 'Structuring Questions' : 'Analyzing Document'}
+                </h3>
+                <p className="text-muted-foreground max-w-md">
+                  {importData.progressStep || 'Processing your document...'}
+                </p>
+              </div>
+
+              <div className="w-full max-w-md space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">File size:</span>
+                  <span className="font-medium">{(importData.fileSize / 1024).toFixed(1)} KB</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Format:</span>
+                  <span className="font-medium">{importData.fileType}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Status:</span>
+                  <Badge variant="secondary" className="gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {importData.status === 'extracting' ? 'Extracting' : 
+                     importData.status === 'structuring' ? 'Structuring' : 'Processing'}
+                  </Badge>
+                </div>
+              </div>
+
+              <Button variant="outline" onClick={() => refetchImport()}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Check Status
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-center">
+          <Button variant="ghost" onClick={() => router.push('/ai-studio')}>
+            Return to AI Studio
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // Failed state - extraction/structuring error
+  if (importData.status === 'failed' || importData.status === 'structuring_failed') {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center gap-4">
@@ -148,8 +249,8 @@ export default function ReviewPage() {
     )
   }
 
-  // Failed state - extraction error
-  if (importData.status === 'FAILED') {
+  // Failed state - extraction/structuring error
+  if (importData.status === 'failed' || importData.status === 'structuring_failed') {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center gap-4">
@@ -157,7 +258,9 @@ export default function ReviewPage() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Extraction Failed</h1>
+            <h1 className="text-3xl font-bold tracking-tight">
+              {importData.status === 'structuring_failed' ? 'Structuring Failed' : 'Extraction Failed'}
+            </h1>
             <p className="text-muted-foreground">{importData.fileName}</p>
           </div>
         </div>
@@ -170,14 +273,18 @@ export default function ReviewPage() {
               </div>
               
               <div className="text-center space-y-2 max-w-2xl">
-                <h3 className="text-xl font-semibold">Could Not Extract Questions</h3>
+                <h3 className="text-xl font-semibold">
+                  {importData.status === 'structuring_failed' 
+                    ? 'Could Not Structure Questions' 
+                    : 'Could Not Extract Questions'}
+                </h3>
                 <p className="text-muted-foreground">
-                  We were unable to read usable text or identify MCQ patterns from this document.
+                  {importData.errorReason || 'An error occurred while processing your document.'}
                 </p>
                 {importData.errorMessage && (
                   <div className="mt-4 p-4 bg-muted rounded-lg text-left">
-                    <p className="text-sm font-medium mb-2">Error Details:</p>
-                    <p className="text-sm text-muted-foreground">{importData.errorMessage}</p>
+                    <p className="text-sm font-medium mb-2">Technical Details:</p>
+                    <p className="text-sm text-muted-foreground font-mono text-xs">{importData.errorMessage}</p>
                   </div>
                 )}
               </div>
@@ -207,7 +314,11 @@ export default function ReviewPage() {
               </div>
 
               <div className="flex gap-3 pt-4">
-                <Button onClick={() => router.push('/ai-studio/upload')}>
+                <Button onClick={handleRetry} disabled={retryMutation.isLoading}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  {retryMutation.isLoading ? 'Retrying...' : 'Retry'}
+                </Button>
+                <Button variant="outline" onClick={() => router.push('/ai-studio/upload')}>
                   Try Another File
                 </Button>
                 <Button variant="outline" onClick={() => router.push('/questions/new')}>
@@ -226,9 +337,8 @@ export default function ReviewPage() {
       </div>
     )
   }
-
   // Completed but no questions detected
-  if (importData.status === 'COMPLETED' && importData.totalQuestions === 0) {
+  if ((importData.status === 'pending_review' || importData.status === 'structured_ok') && importData.totalQuestions === 0) {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center gap-4">
@@ -415,7 +525,7 @@ export default function ReviewPage() {
                         <Button
                           size="sm"
                           onClick={() => handleApprove(Array.from(selectedQuestions))}
-                          disabled={approveMutation.isLoading}
+                          disabled={approveOneMutation.isLoading}
                         >
                           <CheckCircle2 className="h-4 w-4 mr-1" />
                           Approve ({selectedQuestions.size})
@@ -424,7 +534,7 @@ export default function ReviewPage() {
                           size="sm"
                           variant="destructive"
                           onClick={() => handleReject(Array.from(selectedQuestions))}
-                          disabled={rejectMutation.isLoading}
+                          disabled={rejectOneMutation.isLoading}
                         >
                           <XCircle className="h-4 w-4 mr-1" />
                           Reject ({selectedQuestions.size})
@@ -494,7 +604,7 @@ export default function ReviewPage() {
                               size="sm"
                               variant="ghost"
                               onClick={() => handleApprove([candidate.id])}
-                              disabled={approveMutation.isLoading}
+                              disabled={approveOneMutation.isLoading}
                             >
                               <CheckCircle2 className="h-4 w-4" />
                             </Button>
@@ -502,7 +612,7 @@ export default function ReviewPage() {
                               size="sm"
                               variant="ghost"
                               onClick={() => handleReject([candidate.id])}
-                              disabled={rejectMutation.isLoading}
+                              disabled={rejectOneMutation.isLoading}
                             >
                               <XCircle className="h-4 w-4" />
                             </Button>
@@ -543,10 +653,18 @@ export default function ReviewPage() {
         <Button variant="ghost" onClick={() => router.push('/ai-studio')}>
           Back to AI Studio
         </Button>
-        <Button variant="outline" onClick={() => refetchImport()}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          {pendingCount > 0 && (
+            <Button variant="outline" onClick={handleBulkApprove} disabled={bulkApproveMutation.isLoading}>
+              <CheckCheck className="h-4 w-4 mr-2" />
+              {bulkApproveMutation.isLoading ? 'Approving...' : `Approve All (${pendingCount})`}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => refetchImport()}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
     </div>
   )

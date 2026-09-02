@@ -1,39 +1,86 @@
 import { z } from 'zod'
-import { router, protectedProcedure } from '../init'
-import { db } from '@/lib/db'
+import { createTRPCRouter, protectedProcedure } from '../init'
+import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
 
-export const importsRouter = router({
-  // Get import status and summary
-  getStatus: protectedProcedure
-    .input(z.object({ id: z.string() }))
-    .query(async ({ input, ctx }) => {
-      const importRecord = await db.import.findUnique({
-        where: { id: input.id, userId: ctx.user.id },
-        include: {
-          _count: {
-            select: {
-              importedQuestions: true,
-            },
-          },
+export const importsRouter = createTRPCRouter({
+  // Create a new import — starts extraction+structuring pipeline
+  create: protectedProcedure
+    .input(z.object({
+      fileName: z.string().min(1).max(500),
+      fileSize: z.number().int().positive().max(50 * 1024 * 1024),
+      fileType: z.string().min(1).max(200),
+      sourceType: z.enum(['pdf', 'docx', 'txt', 'image', 'ai_generated']).default('pdf'),
+      subject: z.string().max(100).optional(),
+      topic: z.string().max(100).optional(),
+      text: z.string().max(100000).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const importRecord = await prisma.import.create({
+        data: {
+          userId: ctx.user.id,
+          fileName: input.fileName,
+          fileSize: input.fileSize,
+          fileType: input.fileType,
+          sourceType: input.sourceType,
+          status: 'queued',
         },
       })
 
-      if (!importRecord) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
-      }
+      // Run processing (sync for now; in production: background job)
+      processImport(importRecord.id, ctx.user.id, input.sourceType, input.subject, input.topic, input.text)
+        .catch(async (error) => {
+          await prisma.import.update({
+            where: { id: importRecord.id },
+            data: {
+              status: 'failed',
+              errorReason: error instanceof Error ? error.message : 'Processing failed',
+              errorMessage: error instanceof Error ? error.stack : undefined,
+            },
+          })
+        })
 
-      // Count questions by status
+      return { id: importRecord.id }
+    }),
+
+  // Retry a failed import
+  retry: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const importRecord = await prisma.import.findFirst({
+        where: { id: input.id, userId: ctx.user.id },
+      })
+      if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
+
+      await prisma.import.update({
+        where: { id: input.id },
+        data: { status: 'queued', retryCount: { increment: 1 }, errorReason: null, errorMessage: null },
+      })
+
+      processImport(importRecord.id, ctx.user.id, importRecord.sourceType)
+        .catch(async (error) => {
+          await prisma.import.update({
+            where: { id: input.id },
+            data: { status: 'failed', errorReason: error instanceof Error ? error.message : 'Retry failed' },
+          })
+        })
+
+      return { success: true }
+    }),
+
+  // Get import status (polled by frontend)
+  getStatus: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const importRecord = await prisma.import.findUnique({
+        where: { id: input.id, userId: ctx.user.id },
+      })
+      if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
+
       const [pending, approved, rejected] = await Promise.all([
-        db.importedQuestion.count({
-          where: { importId: input.id, status: 'PENDING' },
-        }),
-        db.importedQuestion.count({
-          where: { importId: input.id, status: 'APPROVED' },
-        }),
-        db.importedQuestion.count({
-          where: { importId: input.id, status: 'REJECTED' },
-        }),
+        prisma.importedQuestion.count({ where: { importId: input.id, status: 'pending' } }),
+        prisma.importedQuestion.count({ where: { importId: input.id, status: 'approved' } }),
+        prisma.importedQuestion.count({ where: { importId: input.id, status: 'rejected' } }),
       ])
 
       return {
@@ -41,136 +88,109 @@ export const importsRouter = router({
         fileName: importRecord.fileName,
         fileSize: importRecord.fileSize,
         fileType: importRecord.fileType,
+        sourceType: importRecord.sourceType,
         status: importRecord.status,
+        errorReason: importRecord.errorReason,
+        progressStep: importRecord.progressStep,
+        retryCount: importRecord.retryCount,
         totalQuestions: importRecord.totalQuestions,
         approvedCount: importRecord.approvedCount,
         rejectedCount: importRecord.rejectedCount,
-        errorMessage: importRecord.errorMessage,
+        pendingCount: importRecord.pendingCount,
         createdAt: importRecord.createdAt,
         updatedAt: importRecord.updatedAt,
         completedAt: importRecord.completedAt,
-        candidateCounts: {
-          pending,
-          approved,
-          rejected,
-        },
+        candidateCounts: { pending, approved, rejected },
       }
     }),
 
-  // Get list of questions for review
+  // Get paginated staging questions for review tabs
   reviewList: protectedProcedure
-    .input(
-      z.object({
-        importId: z.string(),
-        status: z.enum(['PENDING', 'APPROVED', 'REJECTED']),
-      })
-    )
+    .input(z.object({
+      importId: z.string(),
+      status: z.enum(['pending', 'approved', 'rejected']).optional(),
+      page: z.number().default(1),
+      pageSize: z.number().default(20),
+    }))
     .query(async ({ input, ctx }) => {
-      // Verify the import belongs to the user
-      const importRecord = await db.import.findUnique({
+      const importRecord = await prisma.import.findFirst({
         where: { id: input.importId, userId: ctx.user.id },
       })
+      if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
 
-      if (!importRecord) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
-      }
+      const where: any = { importId: input.importId }
+      if (input.status) where.status = input.status
 
-      const candidates = await db.importedQuestion.findMany({
-        where: {
-          importId: input.importId,
-          status: input.status,
-        },
-        orderBy: { createdAt: 'asc' },
-      })
+      const [candidates, total] = await Promise.all([
+        prisma.importedQuestion.findMany({
+          where,
+          orderBy: [{ confidence: 'asc' }, { createdAt: 'asc' }],
+          skip: (input.page - 1) * input.pageSize,
+          take: input.pageSize,
+        }),
+        prisma.importedQuestion.count({ where }),
+      ])
 
-      return { candidates }
+      return { candidates, total, page: input.page, pageSize: input.pageSize }
     }),
 
-  // Approve questions
-  approve: protectedProcedure
-    .input(
-      z.object({
-        importId: z.string(),
-        questionIds: z.array(z.string()),
+  // Edit a staging question
+  editStaging: protectedProcedure
+    .input(z.object({
+      id: z.string(),
+      questionText: z.string().min(1).max(5000).optional(),
+      options: z.array(z.object({ label: z.enum(['A', 'B', 'C', 'D']), text: z.string().min(1).max(1000) })).length(4).optional(),
+      correctLabel: z.enum(['A', 'B', 'C', 'D']).nullable().optional(),
+      explanation: z.string().max(5000).nullable().optional(),
+      hint: z.string().max(1000).nullable().optional(),
+      subjectName: z.string().max(100).optional(),
+      topicName: z.string().max(100).optional(),
+      difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const staging = await prisma.importedQuestion.findFirst({
+        where: { id: input.id, import: { userId: ctx.user.id } },
       })
-    )
-    .mutation(async ({ input, ctx }) => {
-      // Verify the import belongs to the user
-      const importRecord = await db.import.findUnique({
-        where: { id: input.importId, userId: ctx.user.id },
+      if (!staging) throw new TRPCError({ code: 'NOT_FOUND', message: 'Staging question not found' })
+
+      const { id, options, ...rest } = input
+      const data: any = { ...rest, edited: true }
+      if (options) data.options = JSON.stringify(options)
+
+      await prisma.importedQuestion.update({ where: { id }, data })
+      return { success: true }
+    }),
+
+  // Approve a single staging question — transactionally creates Question record
+  approveOne: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const staging = await prisma.importedQuestion.findFirst({
+        where: { id: input.id, import: { userId: ctx.user.id } },
+        include: { import: true },
       })
+      if (!staging) throw new TRPCError({ code: 'NOT_FOUND', message: 'Staging question not found' })
+      if (!staging.correctLabel) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot approve: no correct answer set' })
 
-      if (!importRecord) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
-      }
-
-      // Update questions to APPROVED status
-      await db.importedQuestion.updateMany({
-        where: {
-          id: { in: input.questionIds },
-          importId: input.importId,
-        },
-        data: { status: 'APPROVED' },
-      })
-
-      // For each approved question, create an actual Question record
-      const approvedQuestions = await db.importedQuestion.findMany({
-        where: {
-          id: { in: input.questionIds },
-          importId: input.importId,
-        },
-      })
-
-      for (const candidate of approvedQuestions) {
-        // Find or create subject
+      await prisma.$transaction(async (tx) => {
         let subject = null
-        if (candidate.subjectName) {
-          subject = await db.subject.findFirst({
-            where: {
-              userId: ctx.user.id,
-              name: candidate.subjectName,
-            },
-          })
-
-          if (!subject) {
-            subject = await db.subject.create({
-              data: {
-                name: candidate.subjectName,
-                userId: ctx.user.id,
-              },
-            })
-          }
+        if (staging.subjectName) {
+          subject = await tx.subject.findFirst({ where: { userId: ctx.user.id, name: staging.subjectName } })
+          if (!subject) subject = await tx.subject.create({ data: { name: staging.subjectName, userId: ctx.user.id } })
         }
 
-        // Find or create topic
         let topic = null
-        if (candidate.topicName && subject) {
-          topic = await db.topic.findFirst({
-            where: {
-              userId: ctx.user.id,
-              subjectId: subject.id,
-              name: candidate.topicName,
-            },
-          })
-
-          if (!topic) {
-            topic = await db.topic.create({
-              data: {
-                name: candidate.topicName,
-                userId: ctx.user.id,
-                subjectId: subject.id,
-              },
-            })
-          }
+        if (staging.topicName && subject) {
+          topic = await tx.topic.findFirst({ where: { userId: ctx.user.id, subjectId: subject.id, name: staging.topicName } })
+          if (!topic) topic = await tx.topic.create({ data: { name: staging.topicName, userId: ctx.user.id, subjectId: subject.id } })
         }
 
-        // Create the question
-        const question = await db.question.create({
+        const question = await tx.question.create({
           data: {
-            text: candidate.questionText,
-            explanation: candidate.explanation,
-            hint: candidate.hint,
-            difficulty: candidate.difficulty || 'MEDIUM',
+            text: staging.questionText,
+            explanation: staging.explanation,
+            hint: staging.hint,
+            difficulty: staging.difficulty || 'MEDIUM',
             status: 'ACTIVE',
             userId: ctx.user.id,
             subjectId: subject?.id,
@@ -178,125 +198,120 @@ export const importsRouter = router({
           },
         })
 
-        // Parse and create options
-        const options = JSON.parse(
-          typeof candidate.options === 'string' ? candidate.options : '[]'
-        )
-
+        const options = JSON.parse(staging.options || '[]')
         for (let i = 0; i < options.length; i++) {
-          await db.questionOption.create({
-            data: {
-              questionId: question.id,
-              label: options[i].label,
-              text: options[i].text,
-              position: i,
-            },
+          await tx.questionOption.create({
+            data: { questionId: question.id, label: options[i].label, text: options[i].text, position: i },
           })
         }
 
-        // Create the answer
-        await db.questionAnswer.create({
-          data: {
-            questionId: question.id,
-            correctLabel: candidate.correctLabel,
-            explanation: candidate.explanation,
-          },
+        await tx.questionAnswer.create({
+          data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation },
         })
 
-        // Link the imported question to the created question
-        await db.importedQuestion.update({
-          where: { id: candidate.id },
-          data: { questionId: question.id },
+        await tx.reviewItem.create({
+          data: { questionId: question.id, userId: ctx.user.id, status: 'NEW', nextReviewAt: new Date() },
         })
 
-        // Parse and create tags
-        const tags = JSON.parse(
-          typeof candidate.tags === 'string' ? candidate.tags : '[]'
-        )
-        for (const tagName of tags) {
-          await db.questionTag.create({
-            data: {
-              questionId: question.id,
-              name: tagName,
-            },
-          })
-        }
-      }
+        await tx.importedQuestion.update({
+          where: { id: staging.id },
+          data: { status: 'approved', questionId: question.id },
+        })
 
-      // Update import counts
-      const approvedCount = await db.importedQuestion.count({
-        where: { importId: input.importId, status: 'APPROVED' },
+        const approvedCount = await tx.importedQuestion.count({ where: { importId: staging.importId, status: 'approved' } })
+        const pendingCount = await tx.importedQuestion.count({ where: { importId: staging.importId, status: 'pending' } })
+        await tx.import.update({ where: { id: staging.importId }, data: { approvedCount, pendingCount } })
       })
 
-      await db.import.update({
-        where: { id: input.importId },
-        data: { approvedCount },
-      })
-
-      return { success: true, approvedCount: input.questionIds.length }
+      return { success: true }
     }),
 
-  // Reject questions
-  reject: protectedProcedure
-    .input(
-      z.object({
-        importId: z.string(),
-        questionIds: z.array(z.string()),
+  // Reject a staging question
+  rejectOne: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const staging = await prisma.importedQuestion.findFirst({
+        where: { id: input.id, import: { userId: ctx.user.id } },
+        include: { import: true },
       })
-    )
-    .mutation(async ({ input, ctx }) => {
-      // Verify the import belongs to the user
-      const importRecord = await db.import.findUnique({
-        where: { id: input.importId, userId: ctx.user.id },
+      if (!staging) throw new TRPCError({ code: 'NOT_FOUND', message: 'Staging question not found' })
+
+      await prisma.$transaction(async (tx) => {
+        await tx.importedQuestion.update({ where: { id: input.id }, data: { status: 'rejected' } })
+        const rejectedCount = await tx.importedQuestion.count({ where: { importId: staging.importId, status: 'rejected' } })
+        const pendingCount = await tx.importedQuestion.count({ where: { importId: staging.importId, status: 'pending' } })
+        await tx.import.update({ where: { id: staging.importId }, data: { rejectedCount, pendingCount } })
       })
 
-      if (!importRecord) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
+      return { success: true }
+    }),
+
+  // Bulk approve all pending questions
+  bulkApprove: protectedProcedure
+    .input(z.object({ importId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const importRecord = await prisma.import.findFirst({
+        where: { id: input.importId, userId: ctx.user.id },
+        include: { importedQuestions: { where: { status: 'pending', correctLabel: { not: null } } } },
+      })
+      if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
+
+      for (const staging of importRecord.importedQuestions) {
+        await prisma.$transaction(async (tx) => {
+          let subject = null
+          if (staging.subjectName) {
+            subject = await tx.subject.findFirst({ where: { userId: ctx.user.id, name: staging.subjectName } })
+            if (!subject) subject = await tx.subject.create({ data: { name: staging.subjectName, userId: ctx.user.id } })
+          }
+
+          let topic = null
+          if (staging.topicName && subject) {
+            topic = await tx.topic.findFirst({ where: { userId: ctx.user.id, subjectId: subject.id, name: staging.topicName } })
+            if (!topic) topic = await tx.topic.create({ data: { name: staging.topicName, userId: ctx.user.id, subjectId: subject.id } })
+          }
+
+          const question = await tx.question.create({
+            data: {
+              text: staging.questionText,
+              explanation: staging.explanation,
+              hint: staging.hint,
+              difficulty: staging.difficulty || 'MEDIUM',
+              status: 'ACTIVE',
+              userId: ctx.user.id,
+              subjectId: subject?.id,
+              topicId: topic?.id,
+            },
+          })
+
+          const options = JSON.parse(staging.options || '[]')
+          for (let i = 0; i < options.length; i++) {
+            await tx.questionOption.create({ data: { questionId: question.id, label: options[i].label, text: options[i].text, position: i } })
+          }
+
+          await tx.questionAnswer.create({ data: { questionId: question.id, correctLabel: staging.correctLabel!, explanation: staging.explanation } })
+          await tx.reviewItem.create({ data: { questionId: question.id, userId: ctx.user.id, status: 'NEW', nextReviewAt: new Date() } })
+          await tx.importedQuestion.update({ where: { id: staging.id }, data: { status: 'approved', questionId: question.id } })
+        })
       }
 
-      // Update questions to REJECTED status
-      await db.importedQuestion.updateMany({
-        where: {
-          id: { in: input.questionIds },
-          importId: input.importId,
-        },
-        data: { status: 'REJECTED' },
-      })
+      const [approvedCount, pendingCount] = await Promise.all([
+        prisma.importedQuestion.count({ where: { importId: input.importId, status: 'approved' } }),
+        prisma.importedQuestion.count({ where: { importId: input.importId, status: 'pending' } }),
+      ])
+      await prisma.import.update({ where: { id: input.importId }, data: { approvedCount, pendingCount } })
 
-      // Update import counts
-      const rejectedCount = await db.importedQuestion.count({
-        where: { importId: input.importId, status: 'REJECTED' },
-      })
-
-      await db.import.update({
-        where: { id: input.importId },
-        data: { rejectedCount },
-      })
-
-      return { success: true, rejectedCount: input.questionIds.length }
+      return { success: true, approvedCount: importRecord.importedQuestions.length }
     }),
 
   // List all imports for the user
   list: protectedProcedure
-    .input(
-      z.object({
-        status: z.enum(['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED']).optional(),
-        limit: z.number().min(1).max(100).default(20),
-        cursor: z.string().optional(),
-      })
-    )
+    .input(z.object({ status: z.string().optional(), limit: z.number().min(1).max(100).default(20), cursor: z.string().optional() }))
     .query(async ({ input, ctx }) => {
-      const imports = await db.import.findMany({
-        where: {
-          userId: ctx.user.id,
-          ...(input.status && { status: input.status }),
-        },
+      const imports = await prisma.import.findMany({
+        where: { userId: ctx.user.id, ...(input.status && { status: input.status }) },
         orderBy: { createdAt: 'desc' },
         take: input.limit + 1,
-        ...(input.cursor && {
-          cursor: { id: input.cursor },
-          skip: 1,
-        }),
+        ...(input.cursor && { cursor: { id: input.cursor }, skip: 1 }),
       })
 
       let nextCursor: string | undefined = undefined
@@ -305,30 +320,156 @@ export const importsRouter = router({
         nextCursor = nextItem?.id
       }
 
-      return {
-        imports,
-        nextCursor,
-      }
+      return { imports, nextCursor }
     }),
 
-  // Delete an import and all its candidates
+  // Delete an import
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
-      // Verify the import belongs to the user
-      const importRecord = await db.import.findUnique({
-        where: { id: input.id, userId: ctx.user.id },
-      })
+    .mutation(async ({ ctx, input }) => {
+      const importRecord = await prisma.import.findFirst({ where: { id: input.id, userId: ctx.user.id } })
+      if (!importRecord) throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
 
-      if (!importRecord) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Import not found' })
-      }
-
-      // Delete the import (cascade will handle importedQuestions)
-      await db.import.delete({
-        where: { id: input.id },
-      })
-
+      await prisma.import.delete({ where: { id: input.id } })
       return { success: true }
     }),
+
+  // AI Generation: generate MCQs from topic/difficulty/count
+  aiGenerate: protectedProcedure
+    .input(z.object({
+      subject: z.string().min(1).max(100),
+      topic: z.string().min(1).max(100),
+      difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).default('MEDIUM'),
+      count: z.number().int().min(1).max(50).default(10),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const importRecord = await prisma.import.create({
+        data: {
+          userId: ctx.user.id,
+          fileName: `AI: ${input.subject} - ${input.topic}`,
+          fileSize: 0,
+          fileType: 'ai_generated',
+          sourceType: 'ai_generated',
+          status: 'structuring',
+          totalQuestions: 0,
+          approvedCount: 0,
+          rejectedCount: 0,
+          pendingCount: 0,
+        },
+      })
+
+      try {
+        const { generateMCQs } = await import('@/lib/ai-studio/structuring')
+        const { mcqs, warnings } = await generateMCQs(input.subject, input.topic, input.difficulty, input.count)
+
+        for (const mcq of mcqs) {
+          await prisma.importedQuestion.create({
+            data: {
+              importId: importRecord.id,
+              questionText: mcq.question_text,
+              options: JSON.stringify(mcq.options),
+              correctLabel: mcq.correct_option,
+              explanation: mcq.explanation,
+              difficulty: input.difficulty,
+              subjectName: input.subject,
+              topicName: input.topic,
+              status: 'pending',
+              confidence: mcq.confidence,
+              warnings: JSON.stringify(mcq.warnings),
+            },
+          })
+        }
+
+        await prisma.import.update({
+          where: { id: importRecord.id },
+          data: {
+            status: 'pending_review',
+            totalQuestions: mcqs.length,
+            pendingCount: mcqs.length,
+            progressStep: 'Ready for review',
+            completedAt: new Date(),
+          },
+        })
+
+        return { id: importRecord.id, count: mcqs.length }
+      } catch (error) {
+        await prisma.import.update({
+          where: { id: importRecord.id },
+          data: { status: 'failed', errorReason: error instanceof Error ? error.message : 'AI generation failed' },
+        })
+        throw error
+      }
+    }),
 })
+
+// Helper: process an import (extraction → structuring → staging)
+async function processImport(
+  importId: string,
+  userId: string,
+  sourceType: string,
+  subject?: string,
+  topic?: string,
+  text?: string
+) {
+  // Step 1: Extraction (skip for AI-generated)
+  if (sourceType !== 'ai_generated') {
+    await prisma.import.update({
+      where: { id: importId },
+      data: { status: 'extracting', progressStep: 'Extracting text from document...' },
+    })
+
+    // In production: fetch file from object storage, extract text
+    // For now: use provided text or skip
+    if (!text || text.trim().length < 30) {
+      await prisma.import.update({
+        where: { id: importId },
+        data: { status: 'extracted' },
+      })
+      // No text available — mark as needs_manual
+      await prisma.import.update({
+        where: { id: importId },
+        data: { status: 'needs_manual', progressStep: 'No text extracted — manual entry required', completedAt: new Date() },
+      })
+      return
+    }
+
+    // Step 2: Structuring
+    await prisma.import.update({
+      where: { id: importId },
+      data: { status: 'structuring', progressStep: 'Structuring questions with AI...' },
+    })
+
+    const { structureText } = await import('@/lib/ai-studio/structuring')
+    const { mcqs, warnings } = await structureText(text, subject, topic)
+
+    for (const mcq of mcqs) {
+      await prisma.importedQuestion.create({
+        data: {
+          importId,
+          questionText: mcq.question_text,
+          options: JSON.stringify(mcq.options),
+          correctLabel: mcq.correct_option,
+          explanation: mcq.explanation,
+          difficulty: 'MEDIUM',
+          subjectName: subject,
+          topicName: topic,
+          status: 'pending',
+          confidence: mcq.confidence,
+          warnings: JSON.stringify(mcq.warnings),
+          rawSnippet: text.slice(0, 500),
+        },
+      })
+    }
+
+    await prisma.import.update({
+      where: { id: importId },
+      data: {
+        status: 'pending_review',
+        totalQuestions: mcqs.length,
+        pendingCount: mcqs.length,
+        progressStep: 'Ready for review',
+        completedAt: new Date(),
+      },
+    })
+  }
+}

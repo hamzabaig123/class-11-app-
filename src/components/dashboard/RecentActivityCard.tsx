@@ -32,7 +32,14 @@ const activityIcons: Record<string, React.ReactNode> = {
   IMPORT_STARTED: <Upload className="h-4 w-4 text-cyan-600" />,
   IMPORT_COMPLETED: <CheckCircle className="h-4 w-4 text-cyan-600" />,
   IMPORT_APPROVED: <CheckCircle className="h-4 w-4 text-green-600" />,
+  IMPORT_DELETED: <RotateCcw className="h-4 w-4 text-orange-600" />,
   MASTERY_ACHIEVED: <CheckCircle className="h-4 w-4 text-purple-600" />,
+  NOTE_CREATED: <FileTextIcon className="h-4 w-4 text-amber-600" />,
+  NOTE_UPDATED: <FileTextIcon className="h-4 w-4 text-blue-600" />,
+  NOTE_DELETED: <RotateCcw className="h-4 w-4 text-orange-600" />,
+  NOTE_PINNED: <BookOpen className="h-4 w-4 text-amber-600" />,
+  COLLECTION_CREATED: <FolderPlus className="h-4 w-4 text-violet-600" />,
+  COLLECTION_UPDATED: <FolderPlus className="h-4 w-4 text-violet-500" />,
 }
 
 const activityLabels: Record<string, string> = {
@@ -47,7 +54,37 @@ const activityLabels: Record<string, string> = {
   IMPORT_STARTED: 'Import started',
   IMPORT_COMPLETED: 'Import completed',
   IMPORT_APPROVED: 'Import approved',
+  IMPORT_DELETED: 'Import deleted',
   MASTERY_ACHIEVED: 'Mastery achieved',
+  NOTE_CREATED: 'Note created',
+  NOTE_UPDATED: 'Note updated',
+  NOTE_DELETED: 'Note deleted',
+  NOTE_PINNED: 'Note pinned',
+  COLLECTION_CREATED: 'Collection created',
+  COLLECTION_UPDATED: 'Collection updated',
+}
+
+function FileTextIcon(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </svg>
+  )
 }
 
 export function RecentActivityCard({ activities, loading }: RecentActivityCardProps) {
