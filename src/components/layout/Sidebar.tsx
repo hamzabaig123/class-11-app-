@@ -11,6 +11,7 @@ import {
   BarChart3,
   Settings,
   HelpCircle,
+  QrCode,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -41,6 +42,7 @@ const primaryNav = [
 ]
 
 const secondaryNav = [
+  { name: 'QR Share', href: '/qr-share', icon: QrCode },
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Help', href: '/help', icon: HelpCircle },
 ]

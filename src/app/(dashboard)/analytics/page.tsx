@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { TrendingUp, TrendingDown, Minus, Target, Clock, Flame, BookOpen, Award, Download, ArrowRight, ChevronDown, Info } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Target, Clock, Flame, BookOpen, Award, Download, ArrowRight, ChevronDown, Info, Eye, Lightbulb, Zap, Calendar, BarChart3 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -30,29 +30,26 @@ export default function AnalyticsPage() {
   const range = useMemo(() => getDateRange(dateRange), [dateRange])
 
   const { data: summary, isLoading: loadingSummary } = trpc.analytics.summary.useQuery({
-    from: range.from,
-    to: range.to,
+    from: range.from, to: range.to,
   })
 
   const { data: accuracyTrend, isLoading: loadingTrend } = trpc.analytics.accuracyTrend.useQuery({
-    from: range.from,
-    to: range.to,
+    from: range.from, to: range.to,
   })
 
   const { data: subjects, isLoading: loadingSubjects } = trpc.analytics.bySubject.useQuery({
-    from: range.from,
-    to: range.to,
+    from: range.from, to: range.to,
   })
 
   const { data: chapters, isLoading: loadingChapters } = trpc.analytics.byChapter.useQuery({
-    from: range.from,
-    to: range.to,
+    from: range.from, to: range.to,
   })
 
   const { data: recommendation } = trpc.analytics.recommendation.useQuery({
-    from: range.from,
-    to: range.to,
+    from: range.from, to: range.to,
   })
+
+  const { data: weakTopics } = trpc.practice.getWeakTopics.useQuery({ limit: 5 })
 
   const maxAccuracy = useMemo(() => {
     if (!accuracyTrend || accuracyTrend.length === 0) return 100
@@ -86,6 +83,13 @@ export default function AnalyticsPage() {
     }
   }
 
+  const getDifficultyBreakdown = () => {
+    // This would be aggregated from attempts data in a real implementation
+    return { easy: 0, medium: 0, hard: 0 }
+  }
+
+  const difficultyBreakdown = getDifficultyBreakdown()
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -96,18 +100,12 @@ export default function AnalyticsPage() {
         </div>
         <div className="flex items-center gap-3">
           <Select value={dateRange} onValueChange={setDateRange}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {DATE_RANGES.map(r => (
-                <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-              ))}
+              {DATE_RANGES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="icon" title="Export data">
-            <Download className="h-4 w-4" />
-          </Button>
+          <Button variant="outline" size="icon" title="Export data"><Download className="h-4 w-4" /></Button>
         </div>
       </div>
 
@@ -184,13 +182,10 @@ export default function AnalyticsPage() {
               <BookOpen className="h-12 w-12 text-muted-foreground/30 mb-3" />
               <p className="text-muted-foreground font-medium">No activity in this period</p>
               <p className="text-sm text-muted-foreground">Complete some practice sessions to see your accuracy trend</p>
-              <Link href="/practice/new">
-                <Button className="mt-4" size="sm">Start Practice</Button>
-              </Link>
+              <Link href="/practice/new"><Button className="mt-4" size="sm">Start Practice</Button></Link>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Simple bar chart */}
               <div className="flex items-end gap-1 h-[250px] overflow-x-auto pb-2">
                 {accuracyTrend.map((point, i) => (
                   <div key={point.date} className="flex flex-col items-center min-w-[40px] flex-1 group">
@@ -209,14 +204,6 @@ export default function AnalyticsPage() {
                   </div>
                 ))}
               </div>
-              {/* Accessible summary */}
-              <div className="sr-only" role="table" aria-label="Accuracy data">
-                {accuracyTrend.map(point => (
-                  <div key={point.date} role="row">
-                    Date: {point.date}, Accuracy: {Math.round(point.accuracy)}%, Correct: {point.correct}, Total: {point.attempts}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </CardContent>
@@ -232,9 +219,7 @@ export default function AnalyticsPage() {
           <CardContent>
             {loadingSubjects ? (
               <div className="space-y-4">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-16 bg-muted rounded animate-pulse" />
-                ))}
+                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded animate-pulse" />)}
               </div>
             ) : !subjects || subjects.length === 0 ? (
               <div className="text-center py-8">
@@ -248,15 +233,10 @@ export default function AnalyticsPage() {
                   <div key={subject.subjectId} className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="font-medium">{subject.subjectName}</span>
-                      <span className="text-muted-foreground">
-                        {subject.attempts} attempts
-                      </span>
+                      <span className="text-muted-foreground">{subject.attempts} attempts</span>
                     </div>
                     <div className="h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-burgundy-600 rounded-full transition-all"
-                        style={{ width: `${subject.accuracy ?? 0}%` }}
-                      />
+                      <div className="h-full bg-burgundy-600 rounded-full transition-all" style={{ width: `${subject.accuracy ?? 0}%` }} />
                     </div>
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>Accuracy: {formatPercentage(subject.accuracy)}</span>
@@ -278,9 +258,7 @@ export default function AnalyticsPage() {
           <CardContent>
             {loadingChapters ? (
               <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="h-12 bg-muted rounded animate-pulse" />
-                ))}
+                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-12 bg-muted rounded animate-pulse" />)}
               </div>
             ) : !chapters || chapters.length === 0 ? (
               <div className="text-center py-8">
@@ -313,8 +291,41 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      {/* Next Best Action */}
-      {recommendation && (
+      {/* Weak Areas & Recommendations */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Weak Areas */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Lightbulb className="h-5 w-5 text-yellow-500" />Weak Areas</CardTitle>
+            <CardDescription>Topics that need more attention</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!weakTopics || weakTopics.length === 0 ? (
+              <div className="text-center py-8">
+                <Award className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-muted-foreground">No weak areas detected yet</p>
+                <p className="text-sm text-muted-foreground">Keep practicing to get personalized insights</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {weakTopics.map((topic: any) => (
+                  <div key={topic.id} className="flex items-center justify-between p-3 rounded-lg border border-yellow-200 bg-yellow-50/50">
+                    <div>
+                      <p className="font-medium text-sm">{topic.name}</p>
+                      <p className="text-xs text-muted-foreground">{topic.subject} · {topic.incorrectCount} incorrect</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-yellow-700">{Math.round(topic.weaknessScore)}%</p>
+                      <p className="text-[10px] text-muted-foreground">weakness</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Next Best Action */}
         <Card className="border-burgundy-200 bg-burgundy-50/50">
           <CardContent className="py-6">
             <div className="flex items-start gap-4">
@@ -323,10 +334,10 @@ export default function AnalyticsPage() {
               </div>
               <div className="flex-1">
                 <h3 className="font-semibold text-burgundy-900">Next Best Action</h3>
-                <p className="text-sm text-burgundy-700 mt-1">{recommendation.reason}</p>
-                <Link href={getActionHref(recommendation.action)}>
+                <p className="text-sm text-burgundy-700 mt-1">{recommendation?.reason || 'Start a practice session to get personalized recommendations.'}</p>
+                <Link href={recommendation ? getActionHref(recommendation.action) : '/practice/new'}>
                   <Button size="sm" className="mt-3" variant="default">
-                    {getActionLabel(recommendation.action)}
+                    {recommendation ? getActionLabel(recommendation.action) : 'Start Practice'}
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
                 </Link>
@@ -334,7 +345,7 @@ export default function AnalyticsPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      </div>
     </div>
   )
 }

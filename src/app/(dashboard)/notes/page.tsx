@@ -20,7 +20,7 @@ type NoteType = 'CONCEPT' | 'SUMMARY' | 'MISTAKE' | 'CHEAT_SHEET'
 const NOTE_TYPES: { id: NoteType; label: string; color: string; template: string }[] = [
   { id: 'CONCEPT', label: 'Concept', color: 'bg-blue-100 text-blue-700', template: '# Concept\n\n## Key Points\n\n## Explanation\n\n## Examples\n' },
   { id: 'SUMMARY', label: 'Summary', color: 'bg-green-100 text-green-700', template: '# Summary\n\n## Main Ideas\n\n## Key Takeaways\n' },
-  { idolecule', color: 'bg-red-100 text-red-700', template: '# Mistake Note\n\n## What I Got Wrong\n\n## Correct Understanding\n\n## How to Avoid This Mistake\n' },
+  { id: 'MISTAKE', label: 'Mistake Note', color: 'bg-red-100 text-red-700', template: '# Mistake Note\n\n## What I Got Wrong\n\n## Correct Understanding\n\n## How to Avoid This Mistake\n' },
   { id: 'CHEAT_SHEET', label: 'Cheat Sheet', color: 'bg-purple-100 text-purple-700', template: '# Cheat Sheet\n\n## Formulas\n\n## Key Facts\n\n## Quick Reference\n' },
 ]
 

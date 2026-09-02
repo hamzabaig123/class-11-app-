@@ -27,7 +27,7 @@ export function QuickActions({ questionCount, onAddQuestion }: QuickActionsProps
           Import MCQs
         </Button>
       </Link>
-      <Link href="/questions/new?tab=subject">
+      <Link href="/subjects/new">
         <Button variant="secondary" size="lg" className="gap-2">
           <FolderPlus className="h-5 w-5" />
           Create Subject

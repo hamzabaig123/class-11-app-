@@ -1,371 +1,181 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
+import { ChevronLeft, ChevronRight, Clock, Flag, Bookmark, HelpCircle, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { trpc } from '@/lib/trpc'
 import { toast } from '@/components/ui/use-toast'
-import { PracticeHeader } from '@/components/practice/PracticeHeader'
-import { QuestionPanel } from '@/components/practice/QuestionPanel'
-import { ExplanationCard } from '@/components/practice/ExplanationCard'
-import { SessionOverview } from '@/components/practice/SessionOverview'
-import { PracticeControls } from '@/components/practice/PracticeControls'
-import { CompletionDialog } from '@/components/practice/CompletionDialog'
-import { ResultsPage } from '@/components/practice/ResultsPage'
-import type { ConfidenceLevel } from '@/types/practice'
-import { Button } from '@/components/ui/button'
-import { PanelRightClose, PanelRight } from 'lucide-react'
-import { cn } from '@/lib/utils'
 
-interface FeedbackData {
-  isCorrect: boolean
-  correctLabel: string
-  explanation: string | null
-  attemptId: string
-}
+export default function PracticeSessionPage() {
+  const params = useParams()
+  const sessionId = params.sessionId as string
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [selectedOption, setSelectedOption] = useState<string | null>(null)
+  const [showExplanation, setShowExplanation] = useState(false)
+  const [showHint, setShowHint] = useState(false)
+  const [answers, setAnswers] = useState<Record<string, { selected: string; isCorrect: boolean; confidence?: string }>>({})
 
-export default function PracticeSessionPage({ params }: { params: { sessionId: string } }) {
-  const router = useRouter()
-  const { sessionId } = params
-  const [showOverview, setShowOverview] = useState(true)
-  const [completionDialogOpen, setCompletionDialogOpen] = useState(false)
-  const [localAnswers, setLocalAnswers] = useState<Record<string, FeedbackData>>({})
-  const [localHints, setLocalHints] = useState<Record<string, string | null>>({})
-  const [currentIdx, setCurrentIdx] = useState<number | null>(null)
-  const [clientSequence, setClientSequence] = useState(0)
+  const { data: session, isLoading, refetch } = trpc.practice.getSession.useQuery({ sessionId })
 
-  const { data: session, isLoading, error } = trpc.practice.getSession.useQuery(
-    { sessionId },
-    { enabled: !!sessionId }
-  )
-
-  const { data: results } = trpc.practice.results.useQuery(
-    { sessionId },
-    {
-      enabled: !!sessionId && session?.status === 'COMPLETED',
-    }
-  )
-
-  const startSession = trpc.practice.startSession.useMutation({
+  const submitAnswer = trpc.practice.submitAnswer.useMutation({
     onSuccess: () => {
-      // Session started, now we can answer
+      setShowExplanation(true)
+      refetch()
     },
-    onError: (error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   })
 
-  const answerMutation = trpc.practice.answer.useMutation({
-    onSuccess: (data) => {
-      if (session) {
-        const currentQuestion = session.questions[currentIdx ?? session.currentIndex]
-        if (currentQuestion && !data.alreadyAnswered) {
-          setLocalAnswers(prev => ({
-            ...prev,
-            [currentQuestion.id]: {
-              isCorrect: data.isCorrect,
-              correctLabel: data.correctLabel,
-              explanation: data.explanation,
-              attemptId: data.attemptId,
-            },
-          }))
-        }
-      }
-    },
-    onError: (error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    },
+  const completeSession = trpc.practice.complete.useMutation({
+    onSuccess: () => toast({ title: 'Session completed!' }),
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   })
-
-  const skipMutation = trpc.practice.skip.useMutation({
-    onSuccess: (data) => {
-      if (session) {
-        const nextIdx = data.nextPosition
-        if (nextIdx < session.questionCount) {
-          setCurrentIdx(nextIdx)
-        }
-      }
-    },
-    onError: (error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    },
-  })
-
-  const completeMutation = trpc.practice.complete.useMutation({
-    onSuccess: () => {
-      setCompletionDialogOpen(false)
-    },
-    onError: (error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    },
-  })
-
-  const abandonMutation = trpc.practice.abandon.useMutation({
-    onSuccess: () => {
-      router.push('/dashboard')
-    },
-  })
-
-  const revealHint = trpc.practice.revealHint.useMutation({
-    onSuccess: (data) => {
-      if (session) {
-        const currentQuestion = session.questions[session.currentIndex]
-        if (currentQuestion) {
-          setLocalHints(prev => ({
-            ...prev,
-            [currentQuestion.id]: data.hint,
-          }))
-        }
-      }
-    },
-  })
-
-  // Auto-start session on first load
-  useEffect(() => {
-    if (session && session.status === 'READY' && !startSession.isSuccess) {
-      startSession.mutate({ sessionId })
-    }
-  }, [session, sessionId, startSession])
 
   useEffect(() => {
-    if (session && currentIdx === null) {
-      setCurrentIdx(session.currentIndex)
-    }
-  }, [session, currentIdx])
+    if (session) setCurrentIndex(session.currentIndex)
+  }, [session?.currentIndex])
 
-  useEffect(() => {
-    if (results) {
-      router.replace(`/practice/${sessionId}`)
-    }
-  }, [results, sessionId])
+  if (isLoading || !session) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-4">
+        <div className="h-8 w-48 bg-muted rounded animate-pulse" />
+        <div className="h-64 bg-muted rounded animate-pulse" />
+      </div>
+    )
+  }
 
-  const handleNavigate = useCallback((position: number) => {
-    setCurrentIdx(position)
-  }, [])
+  const currentQuestion = session.questions[currentIndex]
+  const isLast = currentIndex >= session.questions.length - 1
 
-  const handleSubmitAnswer = useCallback((selectedOption: string, confidence?: ConfidenceLevel, hintUsed?: boolean) => {
-    if (!session) return
-    const question = session.questions[currentIdx ?? session.currentIndex]
-    if (!question) return
-
-    const timeSpentMs = question.timeSpentMs > 0 ? question.timeSpentMs : 5000
-    const newSequence = clientSequence + 1
-    setClientSequence(newSequence)
-
-    answerMutation.mutate({
+  const handleSubmit = () => {
+    if (!selectedOption || !currentQuestion) return
+    submitAnswer.mutate({
       sessionId,
-      sessionQuestionId: question.id,
-      clientEventId: `${sessionId}-${question.id}-${newSequence}`,
-      sequence: newSequence,
-      selectedLabel: selectedOption as 'A' | 'B' | 'C' | 'D',
-      timeSpentMs,
-      confidence: confidence as 'unsure' | 'medium' | 'confident' | undefined,
-      hintUsed: hintUsed ?? false,
+      questionId: currentQuestion.id,
+      selectedOptionKey: selectedOption,
+      timeSpentMs: 30000,
     })
-  }, [session, currentIdx, sessionId, answerMutation, clientSequence])
+  }
 
-  const handleSkip = useCallback(() => {
-    if (!session) return
-    const question = session.questions[currentIdx ?? session.currentIndex]
-    if (!question) return
-
-    skipMutation.mutate({ sessionId, questionId: question.id })
-  }, [session, currentIdx, sessionId, skipMutation])
-
-  const handleNext = useCallback(() => {
-    if (!session) return
-    const idx = currentIdx ?? session.currentIndex
-    if (idx < session.questionCount - 1) {
-      setCurrentIdx(idx + 1)
-    }
-  }, [session, currentIdx])
-
-  const handlePrevious = useCallback(() => {
-    if (!session) return
-    const idx = currentIdx ?? session.currentIndex
-    if (idx > 0) {
-      setCurrentIdx(idx - 1)
-    }
-  }, [session, currentIdx])
-
-  const handleFinish = useCallback(() => {
-    const unanswered = session?.questions.filter(q => q.status === 'UNANSWERED').length ?? 0
-    const skipped = session?.questions.filter(q => q.status === 'SKIPPED').length ?? 0
-
-    if (unanswered > 0 || skipped > 0) {
-      setCompletionDialogOpen(true)
+  const handleNext = () => {
+    setSelectedOption(null)
+    setShowExplanation(false)
+    setShowHint(false)
+    if (isLast) {
+      completeSession.mutate({ sessionId })
     } else {
-      completeMutation.mutate({ sessionId })
+      setCurrentIndex(currentIndex + 1)
     }
-  }, [session, sessionId, completeMutation])
-
-  const handleCompleteConfirm = useCallback(() => {
-    completeMutation.mutate({ sessionId })
-  }, [sessionId, completeMutation])
-
-  const handleExit = useCallback(() => {
-    abandonMutation.mutate({ sessionId })
-  }, [sessionId, abandonMutation])
-
-  if (isLoading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="h-8 w-8 border-4 border-burgundy-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-muted-foreground">Loading practice session...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error || !session) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <p className="text-lg font-medium">Session not found</p>
-          <p className="text-muted-foreground">This practice session may have expired or doesn't exist.</p>
-          <Button onClick={() => router.push('/practice/new')}>Start New Session</Button>
-        </div>
-      </div>
-    )
-  }
-
-  if (session.status === 'COMPLETED' && results) {
-    return <ResultsPage results={results} />
-  }
-
-  const idx = currentIdx ?? session.currentIndex
-  const currentQuestion = session.questions[idx]
-  const isSubmitted = currentQuestion ? localAnswers[currentQuestion.id] !== undefined : false
-  const feedback = currentQuestion ? localAnswers[currentQuestion.id] : null
-  const hint = currentQuestion ? localHints[currentQuestion.id] : null
-  const isLastQuestion = idx >= session.questionCount - 1
-  const hasPrevious = idx > 0
-  const hasNext = idx < session.questionCount - 1
-
-  if (!currentQuestion) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <p className="text-lg font-medium">No questions in this session</p>
-          <Button onClick={() => router.push('/practice/new')}>Start New Session</Button>
-        </div>
-      </div>
-    )
   }
 
   return (
-    <div className="min-h-screen flex flex-col -m-4 lg:-m-6 pt-14 lg:pt-0">
-      <PracticeHeader session={session} onExit={handleExit} />
+    <div className="max-w-4xl mx-auto space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">{session.title}</h1>
+          <span className="text-sm text-muted-foreground">
+            {currentIndex + 1} / {session.questionCount}
+          </span>
+        </div>
+        {session.timeLimitSeconds && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Clock className="h-4 w-4" />
+            {session.timeLimitSeconds}s
+          </div>
+        )}
+      </div>
 
-      <div className="flex-1 flex">
-        {/* Main Panel */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-            <QuestionPanel
-              question={currentQuestion}
-              onSubmit={handleSubmitAnswer}
-              onRevealHint={() => revealHint.mutate({ sessionId, questionId: currentQuestion.id })}
-              isSubmitted={isSubmitted}
-              isSubmitting={answerMutation.isLoading}
-              feedback={feedback}
-              hint={hint}
-            />
+      {/* Progress */}
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full bg-burgundy-600 rounded-full transition-all"
+          style={{ width: `${((currentIndex + 1) / session.questionCount) * 100}%` }}
+        />
+      </div>
 
-            {feedback && (
-              <ExplanationCard
-                isCorrect={feedback.isCorrect}
-                correctLabel={feedback.correctLabel}
-                selectedLabel={currentQuestion.selectedLabel || ''}
-                explanation={feedback.explanation}
-              />
+      {/* Question */}
+      {currentQuestion && (
+        <Card>
+          <CardContent className="p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">{currentQuestion.subject?.name}</span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setShowHint(!showHint)}>
+                  <HelpCircle className="h-4 w-4" />
+                </Button>
+                <Button size="sm" variant="ghost">
+                  <Flag className="h-4 w-4" />
+                </Button>
+                <Button size="sm" variant="ghost">
+                  <Bookmark className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <p className="text-lg font-medium">{currentQuestion.text}</p>
+
+            {/* Hint */}
+            {showHint && currentQuestion.hint && (
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-700">
+                💡 {currentQuestion.hint}
+              </div>
             )}
 
-            <PracticeControls
-              hasPrevious={hasPrevious}
-              hasNext={hasNext}
-              isSubmitted={isSubmitted}
-              isSubmitting={answerMutation.isLoading}
-              selectedOption={currentQuestion.selectedLabel}
-              isLastQuestion={isLastQuestion}
-              unansweredCount={session.questions.filter(q => q.status === 'UNANSWERED').length}
-              onPrevious={handlePrevious}
-              onNext={handleNext}
-              onSkip={handleSkip}
-              onSubmit={() => {
-                if (currentQuestion.selectedLabel) {
-                  handleSubmitAnswer(currentQuestion.selectedLabel)
-                }
-              }}
-              onFinish={handleFinish}
-            />
-          </div>
-        </div>
-
-        {/* Session Overview Sidebar */}
-        <div className={cn(
-          'hidden lg:block border-l bg-card/50 overflow-y-auto transition-all duration-200',
-          showOverview ? 'w-72 p-4' : 'w-10 p-2'
-        )}>
-          <button
-            onClick={() => setShowOverview(!showOverview)}
-            className="text-muted-foreground hover:text-foreground mb-2"
-            aria-label={showOverview ? 'Collapse overview' : 'Expand overview'}
-          >
-            {showOverview ? <PanelRightClose className="h-4 w-4" /> : <PanelRight className="h-4 w-4" />}
-          </button>
-          {showOverview && (
-            <SessionOverview
-              session={session}
-              onNavigate={handleNavigate}
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Mobile Session Overview Toggle */}
-      <div className="lg:hidden fixed bottom-20 right-4 z-20">
-        <Button
-          size="icon"
-          className="h-12 w-12 rounded-full shadow-lg"
-          onClick={() => setShowOverview(!showOverview)}
-        >
-          <PanelRight className="h-5 w-5" />
-        </Button>
-      </div>
-
-      {/* Mobile Session Overview Drawer */}
-      {showOverview && (
-        <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowOverview(false)}>
-          <div
-            className="absolute right-0 top-0 h-full w-72 bg-card p-4 overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Session Progress</h3>
-              <button onClick={() => setShowOverview(false)} className="text-muted-foreground">
-                ✕
-              </button>
+            {/* Options */}
+            <div className="space-y-3">
+              {currentQuestion.options.map(option => (
+                <button
+                  key={option.label}
+                  onClick={() => !showExplanation && setSelectedOption(option.label)}
+                  className={`w-full p-4 rounded-lg border text-left transition-all ${selectedOption === option.label ? 'border-burgundy-600 bg-burgundy-50' : 'hover:bg-accent/50'}`}
+                >
+                  <span className="font-medium mr-3">{option.label}.</span>
+                  {option.text}
+                </button>
+              ))}
             </div>
-            <SessionOverview
-              session={session}
-              onNavigate={(pos) => {
-                handleNavigate(pos)
-                setShowOverview(false)
-              }}
-            />
-          </div>
-        </div>
+
+            {/* Explanation */}
+            {showExplanation && currentQuestion.explanation && (
+              <div className="p-4 rounded-lg bg-green-50 border border-green-200">
+                <p className="text-sm font-medium text-green-700 mb-1">Explanation</p>
+                <p className="text-sm text-green-600">{currentQuestion.explanation}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-between">
+              <Button variant="outline" onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
+                <ChevronLeft className="h-4 w-4 mr-1" />Previous
+              </Button>
+              {!showExplanation ? (
+                <Button onClick={handleSubmit} disabled={!selectedOption}>
+                  Submit Answer
+                </Button>
+              ) : (
+                <Button onClick={handleNext}>
+                  {isLast ? 'Finish' : 'Next'} <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      <CompletionDialog
-        open={completionDialogOpen}
-        onOpenChange={setCompletionDialogOpen}
-        unansweredCount={session.questions.filter(q => q.status === 'UNANSWERED').length}
-        skippedCount={session.questions.filter(q => q.status === 'SKIPPED').length}
-        onComplete={handleCompleteConfirm}
-        onGoBack={() => setCompletionDialogOpen(false)}
-        isCompleting={completeMutation.isLoading}
-      />
+      {/* Question Navigator */}
+      <div className="flex flex-wrap gap-1">
+        {session.questions.map((q, i) => (
+          <button
+            key={q.id}
+            onClick={() => setCurrentIndex(i)}
+            className={`w-8 h-8 rounded text-xs font-medium ${i === currentIndex ? 'bg-burgundy-600 text-white' : q.selectedOptionKey ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'}`}
+          >
+            {i + 1}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -183,7 +183,7 @@ export function RecentActivityCard({ activities, loading }: RecentActivityCardPr
           ))}
         </div>
         <div className="mt-4 pt-4 border-t text-center">
-          <Link href="/activity" className="text-sm text-burgundy-600 hover:underline">
+          <Link href="/dashboard" className="text-sm text-burgundy-600 hover:underline">
             View all activity →
           </Link>
         </div>
