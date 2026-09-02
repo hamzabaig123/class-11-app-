@@ -53,7 +53,7 @@ export const appRouter = createTRPCRouter({
         prisma.attempt.groupBy({ by: ['isCorrect'], where: { userId }, _count: true }),
         prisma.attempt.count({ where: { userId, createdAt: { gte: startOfDay, lte: endOfDay } } }),
         prisma.attempt.count({ where: { userId, isCorrect: true, createdAt: { gte: startOfDay, lte: endOfDay } } }),
-        prisma.practiceSession.aggregate({ where: { userId, status: 'COMPLETED', completedAt: { gte: startOfDay, lte: endOfDay } }, _sum: { elapsedSeconds: true } }).then(r => Math.floor((r._sum.elapsedSeconds ?? 0) / 1000)),
+        prisma.practiceSession.aggregate({ where: { userId, status: 'COMPLETED', completedAt: { gte: startOfDay, lte: endOfDay } }, _sum: { elapsedSeconds: true } }).then(r => r._sum.elapsedSeconds ?? 0),
         prisma.reviewItem.count({ where: { userId, nextReviewAt: { gte: startOfDay, lte: endOfDay }, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] } } }),
         calculateStreak(userId),
         prisma.practiceSession.aggregate({ where: { userId, status: 'COMPLETED' }, _sum: { elapsedSeconds: true } }),
@@ -69,7 +69,7 @@ export const appRouter = createTRPCRouter({
         user: { displayName: ctx.user.name ?? 'User', initials: ctx.user.name ? ctx.user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U' },
         questionCount, masteredCount, accuracy, attemptedCount: totalAttempts, dueTodayCount: dueToday,
         studyStreakDays: streak,
-        studyTimeSeconds: Math.floor((studyTime._sum?.elapsedSeconds ?? 0) / 1000),
+        studyTimeSeconds: studyTime._sum?.elapsedSeconds ?? 0,
         unfinishedSession: unfinished ? { id: unfinished.id, currentIndex: unfinished.currentIndex, totalQuestions: unfinished.questionCount, title: unfinished.title ?? 'Practice Session' } : null,
         subjects, recentActivity: activity.map(a => ({ ...a, occurredAt: a.createdAt.toISOString() })),
         onboardingComplete: !!settings,
@@ -349,7 +349,7 @@ export const appRouter = createTRPCRouter({
       const userId = ctx.user.id; const tz = input.timezone ?? await getUserTimezone(userId); const now = new Date(); const to = new Date(); to.setHours(0, 0, 0, 0); const from = new Date(to); from.setDate(from.getDate() - 30)
       const [qc, aa, tt, st, streak, due] = await Promise.all([prisma.question.count({ where: { userId, status: 'ACTIVE' } }), prisma.attempt.count({ where: { userId, createdAt: { gte: from, lte: to } } }), prisma.attempt.groupBy({ by: ['isCorrect'], where: { userId, createdAt: { gte: from, lte: to } }, _count: true }), prisma.practiceSession.aggregate({ where: { userId, status: 'COMPLETED' }, _sum: { elapsedSeconds: true } }), calculateStreak(userId), prisma.reviewItem.count({ where: { userId, nextReviewAt: { lte: to }, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] } } })])
       const total = aa; const correct = tt.find((a: any) => a.isCorrect)?._count ?? 0; const accuracy = total > 0 ? (correct / total) * 100 : null
-      return { questionCount: qc, attemptedCount: total, totalAttempts: total, correctAttempts: correct, accuracy, studyTimeSeconds: Math.floor((st._sum?.elapsedSeconds ?? 0) / 1000), studyStreakDays: streak, dueTodayCount: due, previousPeriod: { questionCount: qc, attemptedCount: total, accuracy } }
+      return { questionCount: qc, attemptedCount: total, totalAttempts: total, correctAttempts: correct, accuracy, studyTimeSeconds: st._sum?.elapsedSeconds ?? 0, studyStreakDays: streak, dueTodayCount: due, previousPeriod: { questionCount: qc, attemptedCount: total, accuracy } }
     }),
     accuracyTrend: protectedProcedure.input(z.object({ from: z.string(), to: z.string(), bucket: z.enum(['daily', 'weekly']).optional(), timezone: z.string().optional() })).query(async ({ ctx, input }) => {
       const userId = ctx.user.id; const tz = input.timezone ?? await getUserTimezone(userId); const from = new Date(input.from); const to = new Date(input.to); const bucket = input.bucket ?? (to.getTime() - from.getTime() > 30 * 24 * 60 * 60 * 1000 ? 'weekly' : 'daily')

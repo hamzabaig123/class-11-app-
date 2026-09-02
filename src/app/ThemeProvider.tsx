@@ -1,5 +1,3 @@
 'use client'
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  return <>{children}</>
-}
+export { ThemeProvider } from '@/components/providers/ThemeProvider'
