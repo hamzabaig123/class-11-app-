@@ -24,6 +24,8 @@ import {
   Flame,
   Plus,
   Gauge,
+  Bookmark,
+  Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -39,9 +41,11 @@ const primaryNav = [
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Notes', href: '/notes', icon: FileText },
   { name: 'Collections', href: '/collections', icon: FolderOpen },
+  { name: 'Bookmarks', href: '/bookmarks', icon: Bookmark },
 ]
 
 const secondaryNav = [
+  { name: 'Search', href: '/search', icon: Search },
   { name: 'QR Share', href: '/qr-share', icon: QrCode },
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Help', href: '/help', icon: HelpCircle },

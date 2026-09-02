@@ -2,9 +2,11 @@
 
 import * as React from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,12 +16,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Menu, LogOut, User, Settings, Bell, Moon, Sun, Monitor } from 'lucide-react'
-import { useTheme } from 'next-themes'
+import { Menu, LogOut, User, Settings, Bell, Search } from 'lucide-react'
+import { ThemeToggle } from '@/components/providers/ThemeToggle'
 
 export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
   const { data: session } = useSession()
-  const { theme, setTheme } = useTheme()
+  const router = useRouter()
+  const [searchQuery, setSearchQuery] = React.useState('')
 
   const userInitials = session?.user?.name
     ? session.user.name
@@ -29,6 +32,13 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
         .toUpperCase()
         .slice(0, 2)
     : 'U'
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (searchQuery.trim()) {
+      router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
+    }
+  }
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
@@ -45,35 +55,26 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
           </Button>
         </div>
 
-        <div className="flex-1" />
+        {/* Search Bar */}
+        <form onSubmit={handleSearch} className="flex-1 max-w-md mx-4 hidden sm:block">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search questions, notes..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </form>
 
         <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full">
-                <Moon className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                <Sun className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-                <span className="sr-only">Toggle theme</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setTheme('light')}>
-                <Sun className="mr-2 h-4 w-4" /> Light
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme('dark')}>
-                <Moon className="mr-2 h-4 w-4" /> Dark
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme('system')}>
-                <Monitor className="mr-2 h-4 w-4" /> System
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ThemeToggle />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="relative h-9 w-9 rounded-full">
                 <Bell className="h-5 w-5" />
-                <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
                 <span className="sr-only">Notifications</span>
               </Button>
             </DropdownMenuTrigger>

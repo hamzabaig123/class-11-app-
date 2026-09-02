@@ -12,7 +12,7 @@ export function AuthenticatedLayout({ children }: { children: React.ReactNode })
       <Sidebar collapsed={collapsed} onToggleCollapse={() => setCollapsed(!collapsed)} />
       <TopBar />
       <div className={`transition-all duration-200 ${collapsed ? 'lg:pl-16' : 'lg:pl-64'}`}>
-        <main className="p-4 lg:p-6 pt-16 lg:pt-6" id="main-content">
+        <main className="p-4 lg:p-6 pt-20 lg:p-6" id="main-content">
           {children}
         </main>
       </div>
