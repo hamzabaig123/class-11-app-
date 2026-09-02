@@ -26,7 +26,7 @@ export default function CollectionDetailPage() {
     onSuccess: () => { refetch(); toast({ title: 'Question removed' }) },
   })
   const startPractice = trpc.collections.startPractice.useMutation({
-    onSuccess: (session) => { router.push(`/practice/${session.id}`) },
+    onSuccess: (session) => { router.push(`/practice/${session.sessionId}`) },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   })
   const togglePin = trpc.collections.togglePinned.useMutation({ onSuccess: () => refetch() })

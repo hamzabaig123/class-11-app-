@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { createTRPCRouter, protectedProcedure } from '../init'
 import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
-import { callLLM, MCQExplanationSchema } from '@/lib/llmService'
 
 export const practiceRouter = createTRPCRouter({
   createSession: protectedProcedure
@@ -180,6 +179,7 @@ export const practiceRouter = createTRPCRouter({
           type: input.mode === 'MOCK' ? 'EXAM' : 'PRACTICE',
           questionCount: questionIds.length,
           timeLimitSeconds: input.timeLimitSeconds,
+          selectionSnapshot: JSON.stringify(input),
         },
       })
 
@@ -243,11 +243,12 @@ export const practiceRouter = createTRPCRouter({
         options: pq.question.options.map(o => ({ label: o.label, text: o.text })),
         position: pq.position,
         status: pq.status,
-        selectedOptionKey: pq.selectedOptionKey,
+        selectedLabel: pq.selectedLabel,
         isCorrect: pq.isCorrect,
         hintUsed: pq.hintUsed,
         confidence: pq.confidence,
         timeSpentMs: pq.timeSpentMs,
+        answerSequence: pq.answerSequence,
       }))
 
       return {
@@ -259,9 +260,8 @@ export const practiceRouter = createTRPCRouter({
         currentIndex: session.currentIndex,
         correctCount: session.correctCount,
         answeredCount: session.answeredCount,
-        totalTimeMs: session.totalTimeMs,
         timeLimitSeconds: session.timeLimitSeconds,
-        startedAt: session.startedAt.toISOString(),
+        startedAt: session.startedAt?.toISOString() ?? null,
         lastActiveAt: session.lastActiveAt.toISOString(),
         completedAt: session.completedAt?.toISOString() ?? null,
         score: session.score,
@@ -269,60 +269,28 @@ export const practiceRouter = createTRPCRouter({
       }
     }),
 
-  saveProgress: protectedProcedure
-    .input(z.object({
-      sessionId: z.string(),
-      currentIndex: z.number().int().min(0),
-    }))
+  startSession: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const session = await prisma.practiceSession.findFirst({
         where: { id: input.sessionId, userId: ctx.user.id },
       })
       if (!session) throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' })
+      if (session.status !== 'READY') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Session already started' })
 
-      await prisma.practiceSession.update({
+      return prisma.practiceSession.update({
         where: { id: input.sessionId },
-        data: {
-          currentIndex: input.currentIndex,
-          lastActiveAt: new Date(),
-        },
+        data: { status: 'IN_PROGRESS', startedAt: new Date() },
       })
-
-      return { success: true }
     }),
 
-  revealHint: protectedProcedure
+  answer: protectedProcedure
     .input(z.object({
       sessionId: z.string(),
-      questionId: z.string(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const pq = await prisma.practiceSessionQuestion.findFirst({
-        where: {
-          sessionId: input.sessionId,
-          questionId: input.questionId,
-          session: { userId: ctx.user.id },
-        },
-        include: { question: { select: { hint: true } } },
-      })
-      if (!pq) throw new TRPCError({ code: 'NOT_FOUND', message: 'Question not found in session' })
-
-      await prisma.practiceSessionQuestion.update({
-        where: { id: pq.id },
-        data: { hintUsed: true },
-      })
-
-      return {
-        hint: pq.question.hint || null,
-        hintUsed: true,
-      }
-    }),
-
-  submitAnswer: protectedProcedure
-    .input(z.object({
-      sessionId: z.string(),
-      questionId: z.string(),
-      selectedOptionKey: z.enum(['A', 'B', 'C', 'D']),
+      sessionQuestionId: z.string(),
+      clientEventId: z.string(),
+      sequence: z.number().int().min(0),
+      selectedLabel: z.enum(['A', 'B', 'C', 'D']),
       timeSpentMs: z.number().int().positive(),
       confidence: z.enum(['unsure', 'medium', 'confident']).optional(),
       hintUsed: z.boolean().default(false),
@@ -333,11 +301,33 @@ export const practiceRouter = createTRPCRouter({
           where: { id: input.sessionId, userId: ctx.user.id },
         })
         if (!session) throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' })
+        if (session.status !== 'IN_PROGRESS') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Session is not in progress' })
+        }
+
+        // Check for duplicate event (idempotency)
+        const existingEvent = await tx.practiceAnswerEvent.findUnique({
+          where: {
+            sessionId_clientEventId: {
+              sessionId: input.sessionId,
+              clientEventId: input.clientEventId,
+            },
+          },
+        })
+        if (existingEvent) {
+          // Return original result
+          return {
+            attemptId: existingEvent.id,
+            isCorrect: existingEvent.isCorrect,
+            correctLabel: existingEvent.selectedLabel,
+            alreadyAnswered: true,
+          }
+        }
 
         const pq = await tx.practiceSessionQuestion.findFirst({
           where: {
+            id: input.sessionQuestionId,
             sessionId: input.sessionId,
-            questionId: input.questionId,
           },
           include: { question: { include: { answer: true } } },
         })
@@ -350,13 +340,45 @@ export const practiceRouter = createTRPCRouter({
         const correctLabel = pq.question.answer?.correctLabel
         if (!correctLabel) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Question has no answer key' })
 
-        const isCorrect = input.selectedOptionKey === correctLabel
+        const isCorrect = input.selectedLabel === correctLabel
 
+        // Create idempotent answer event
+        const answerEvent = await tx.practiceAnswerEvent.create({
+          data: {
+            sessionId: input.sessionId,
+            sessionQuestionId: pq.id,
+            userId: ctx.user.id,
+            clientEventId: input.clientEventId,
+            sequence: input.sequence,
+            selectedLabel: input.selectedLabel,
+            isCorrect,
+            timeSpentMs: input.timeSpentMs,
+            hintUsed: input.hintUsed,
+            confidence: input.confidence,
+          },
+        })
+
+        // Update session question state
+        await tx.practiceSessionQuestion.update({
+          where: { id: pq.id },
+          data: {
+            selectedLabel: input.selectedLabel,
+            isCorrect,
+            status: 'ANSWERED',
+            hintUsed: input.hintUsed,
+            confidence: input.confidence,
+            timeSpentMs: input.timeSpentMs,
+            answerSequence: input.sequence,
+            answeredAt: new Date(),
+          },
+        })
+
+        // Create learning attempt
         const attempt = await tx.attempt.create({
           data: {
-            questionId: input.questionId,
+            questionId: pq.questionId,
             userId: ctx.user.id,
-            selectedLabel: input.selectedOptionKey,
+            selectedLabel: input.selectedLabel,
             isCorrect,
             confidence: input.confidence,
             hintUsed: input.hintUsed,
@@ -366,34 +388,21 @@ export const practiceRouter = createTRPCRouter({
           },
         })
 
-        await tx.practiceSessionQuestion.update({
-          where: { id: pq.id },
-          data: {
-            selectedOptionKey: input.selectedOptionKey,
-            isCorrect,
-            status: 'ANSWERED',
-            hintUsed: input.hintUsed,
-            confidence: input.confidence,
-            timeSpentMs: input.timeSpentMs,
-            answeredAt: new Date(),
-          },
-        })
-
+        // Update review item
         const reviewItem = await tx.reviewItem.findFirst({
-          where: { userId: ctx.user.id, questionId: input.questionId },
+          where: { userId: ctx.user.id, questionId: pq.questionId },
         })
-        await updateReviewItem(tx, ctx.user.id, input.questionId, isCorrect, reviewItem)
+        await updateReviewItem(tx, ctx.user.id, pq.questionId, isCorrect, reviewItem)
 
-        const sessionUpdate: any = {
-          answeredCount: { increment: 1 },
-          correctCount: { increment: isCorrect ? 1 : 0 },
-          totalTimeMs: { increment: input.timeSpentMs },
-          lastActiveAt: new Date(),
-        }
-
+        // Update session counts
         await tx.practiceSession.update({
           where: { id: input.sessionId },
-          data: sessionUpdate,
+          data: {
+            answeredCount: { increment: 1 },
+            correctCount: { increment: isCorrect ? 1 : 0 },
+            lastClientSequence: input.sequence,
+            lastActiveAt: new Date(),
+          },
         })
 
         return {
@@ -403,75 +412,6 @@ export const practiceRouter = createTRPCRouter({
           explanation: pq.question.answer?.explanation || null,
         }
       })
-    }),
-
-  regenerateExplanation: protectedProcedure
-    .input(z.object({ questionId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const question = await prisma.question.findFirst({
-        where: { id: input.questionId, userId: ctx.user.id },
-        include: { answer: true, options: true },
-      })
-
-      if (!question) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Question not found' })
-      }
-
-      if (!question.answer) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Question has no answer key' })
-      }
-
-      // Call LLM to generate explanation
-      const llmReq: any = {
-        purpose: 'explanation',
-        prompt: `Generate a clear, educational explanation for this multiple-choice question:
-
-Question: ${question.text}
-
-Options:
-${question.options.map((o: any, i: number) => String.fromCharCode(65 + i) + ': ' + o.text).join('\n')}
-
-Correct answer: ${String.fromCharCode(65 + question.answer.correctLabel.charCodeAt(0))}
-
-Please provide:
-1. A concise explanation of the correct answer
-2. Brief notes on why each incorrect option is wrong
-
-Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B": "string", "C": "string", "D": "string"}}`,
-        userId: ctx.user.id,
-        schema: MCQExplanationSchema,
-      }
-
-      const llmResponse = await callLLM(llmReq)
-
-      if (!llmResponse.success) {
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: llmResponse.error || 'LLM call failed' })
-      }
-
-      // Update the question answer and question explanation in a transaction
-      await prisma.$transaction(async (tx) => {
-        // Update QuestionAnswer explanation
-        await tx.questionAnswer.update({
-          where: { questionId: input.questionId },
-          data: { explanation: llmResponse.data.explanation },
-        })
-
-        // Update Question explanation and source
-        await tx.question.update({
-          where: { id: input.questionId },
-          data: {
-            explanation: llmResponse.data.explanation,
-            explanationGeneratedAt: new Date(),
-            explanationSource: 'ai_generated',
-          },
-        })
-      })
-
-      return {
-        success: true,
-        explanation: llmResponse.data.explanation,
-        source: 'ai_generated',
-      }
     }),
 
   skip: protectedProcedure
@@ -558,6 +498,59 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
       return { sessionId: session.id, score, totalAnswered, totalCorrect }
     }),
 
+  pause: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await prisma.practiceSession.findFirst({
+        where: { id: input.sessionId, userId: ctx.user.id },
+      })
+      if (!session) throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' })
+      if (session.status !== 'IN_PROGRESS') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Session is not in progress' })
+      }
+      return prisma.practiceSession.update({
+        where: { id: input.sessionId },
+        data: { status: 'PAUSED', pausedAt: new Date() },
+      })
+    }),
+
+  resume: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await prisma.practiceSession.findFirst({
+        where: { id: input.sessionId, userId: ctx.user.id },
+      })
+      if (!session) throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' })
+      if (session.status !== 'PAUSED') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Session is not paused' })
+      }
+      return prisma.practiceSession.update({
+        where: { id: input.sessionId },
+        data: { status: 'IN_PROGRESS', pausedAt: null },
+      })
+    }),
+
+  abandon: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await prisma.practiceSession.update({
+        where: { id: input.sessionId, userId: ctx.user.id },
+        data: { status: 'ABANDONED', abandonedAt: new Date() },
+      })
+
+      await prisma.activityEvent.create({
+        data: {
+          userId: ctx.user.id,
+          type: 'SESSION_ABANDONED',
+          title: `Abandoned "${session.title ?? 'Practice'}"`,
+          entityId: session.id,
+          entityType: 'session',
+        },
+      })
+
+      return { success: true }
+    }),
+
   results: protectedProcedure
     .input(z.object({ sessionId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -612,9 +605,9 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
         .filter(t => t.accuracy < 75)
         .sort((a, b) => a.accuracy - b.accuracy)
 
-      const durationMs = session.completedAt
+      const durationMs = session.completedAt && session.startedAt
         ? session.completedAt.getTime() - session.startedAt.getTime()
-        : session.totalTimeMs
+        : session.elapsedSeconds * 1000
 
       return {
         sessionId: session.id,
@@ -630,7 +623,7 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
         skippedCount: skipped.length,
         unansweredCount: unanswered.length,
         durationMs,
-        startedAt: session.startedAt.toISOString(),
+        startedAt: session.startedAt?.toISOString() ?? null,
         completedAt: session.completedAt?.toISOString() ?? null,
         weakTopics,
         questions: session.practiceQuestions.map(pq => ({
@@ -641,33 +634,12 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
           topic: pq.question.topic,
           position: pq.position,
           status: pq.status,
-          selectedOptionKey: pq.selectedOptionKey,
+          selectedLabel: pq.selectedLabel,
           isCorrect: pq.isCorrect,
           confidence: pq.confidence,
           timeSpentMs: pq.timeSpentMs,
         })),
       }
-    }),
-
-  abandon: protectedProcedure
-    .input(z.object({ sessionId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const session = await prisma.practiceSession.update({
-        where: { id: input.sessionId, userId: ctx.user.id },
-        data: { status: 'ABANDONED', completedAt: new Date() },
-      })
-
-      await prisma.activityEvent.create({
-        data: {
-          userId: ctx.user.id,
-          type: 'SESSION_ABANDONED',
-          title: `Abandoned "${session.title ?? 'Practice'}"`,
-          entityId: session.id,
-          entityType: 'session',
-        },
-      })
-
-      return { success: true }
     }),
 
   reportQuestion: protectedProcedure
@@ -690,13 +662,11 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
       return { success: true }
     }),
 
-  // GET weak topics for a user — returns topics sorted by weaknessScore desc
   getWeakTopics: protectedProcedure
     .input(z.object({ limit: z.number().int().min(1).max(50).default(10) }))
     .query(async ({ ctx, input }) => {
       const { limit } = input
 
-      // Calculate weak topics from attempts data
       const topics = await prisma.topic.findMany({
         where: { userId: ctx.user.id },
         include: {
@@ -732,7 +702,7 @@ Format as JSON: {"explanation": "string", "wrongOptionNotes": {"A": "string", "B
         .sort((a, b) => b.weaknessScore - a.weaknessScore)
         .slice(0, limit)
     }),
-});
+})
 
 async function updateReviewItem(
   tx: any,

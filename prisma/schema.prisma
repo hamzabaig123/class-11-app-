@@ -29,6 +29,7 @@ model User {
   attempts             Attempt[]
   reviewItems          ReviewItem[]
   practiceSessions     PracticeSession[]
+  practiceAnswerEvents PracticeAnswerEvent[]
   activityEvents       ActivityEvent[]
   imports              Import[]
   settings             UserSettings?
@@ -347,32 +348,38 @@ model ReviewItem {
 }
 
 model PracticeSession {
-  id               String    @id @default(cuid())
-  userId           String
-  title            String?
-  mode             String    @default("QUICK")
-  type             String    @default("PRACTICE")
-  status           String    @default("IN_PROGRESS")
-  questionCount    Int       @default(0)
-  currentIndex     Int       @default(0)
-  timeLimitSeconds Int?
-  correctCount     Int       @default(0)
-  answeredCount    Int       @default(0)
-  totalTimeMs      Int       @default(0)
-  startedAt        DateTime  @default(now())
-  lastActiveAt     DateTime  @default(now())
-  completedAt      DateTime?
-  score            Float?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  userId             String
+  title              String?
+  mode               String    @default("QUICK")
+  type               String    @default("PRACTICE")
+  status             String    @default("READY")
+  selectionSnapshot  String?
+  questionSnapshot   String?
+  questionCount      Int       @default(0)
+  currentIndex       Int       @default(0)
+  answeredCount      Int       @default(0)
+  correctCount       Int       @default(0)
+  timeLimitSeconds   Int?
+  elapsedSeconds     Int       @default(0)
+  lastClientSequence Int       @default(0)
+  startedAt          DateTime?
+  lastActiveAt       DateTime  @default(now())
+  pausedAt           DateTime?
+  completedAt        DateTime?
+  abandonedAt        DateTime?
+  failureReason      String?
+  score              Float?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   user              User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   attempts          Attempt[]
   practiceQuestions PracticeSessionQuestion[]
+  answerEvents      PracticeAnswerEvent[]
 
-  @@index([userId])
-  @@index([userId, status])
-  @@index([status])
+  @@index([userId, status, lastActiveAt])
+  @@index([userId, createdAt])
 }
 
 model PracticeSessionQuestion {
@@ -380,21 +387,48 @@ model PracticeSessionQuestion {
   sessionId         String
   questionId        String
   position          Int
-  selectedOptionKey String?
-  isCorrect         Boolean?
   status            String    @default("UNANSWERED")
-  hintUsed          Boolean   @default(false)
+  selectedLabel     String?
+  isCorrect         Boolean?
   confidence        String?
+  hintUsed          Boolean   @default(false)
+  flagged           Boolean   @default(false)
   timeSpentMs       Int       @default(0)
+  answerSequence    Int       @default(0)
   answeredAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   session  PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   question Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answerEvents PracticeAnswerEvent[]
 
   @@unique([sessionId, questionId])
   @@unique([sessionId, position])
-  @@index([sessionId])
-  @@index([questionId])
+  @@index([sessionId, status, position])
+}
+
+model PracticeAnswerEvent {
+  id                String   @id @default(cuid())
+  sessionId         String
+  sessionQuestionId String
+  userId            String
+  clientEventId     String
+  sequence          Int
+  selectedLabel     String
+  isCorrect         Boolean
+  timeSpentMs       Int      @default(0)
+  hintUsed          Boolean  @default(false)
+  confidence        String?
+  createdAt         DateTime @default(now())
+
+  session           PracticeSession       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionQuestion   PracticeSessionQuestion @relation(fields: [sessionQuestionId], references: [id], onDelete: Cascade)
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, clientEventId])
+  @@unique([sessionId, sequence])
+  @@index([sessionId, createdAt])
 }
 
 model ActivityEvent {
