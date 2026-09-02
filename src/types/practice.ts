@@ -13,11 +13,12 @@ export interface SafeQuestion {
   options: { label: string; text: string }[]
   position: number
   status: QuestionStatus
-  selectedOptionKey: string | null
+  selectedLabel: string | null
   isCorrect: boolean | null
   hintUsed: boolean
   confidence: ConfidenceLevel | null
   timeSpentMs: number
+  answerSequence: number
 }
 
 export interface PracticeSession {
@@ -29,9 +30,10 @@ export interface PracticeSession {
   currentIndex: number
   correctCount: number
   answeredCount: number
-  totalTimeMs: number
   timeLimitSeconds: number | null
-  startedAt: string
+  elapsedSeconds: number
+  lastClientSequence: number
+  startedAt: string | null
   lastActiveAt: string
   completedAt: string | null
   score: number | null
@@ -52,41 +54,25 @@ export interface PracticeResults {
   skippedCount: number
   unansweredCount: number
   durationMs: number
-  startedAt: string
+  startedAt: string | null
   completedAt: string | null
-  weakTopics: WeakTopic[]
-  questions: ResultQuestion[]
-}
-
-export interface WeakTopic {
-  name: string
-  accuracy: number
-  correct: number
-  total: number
-}
-
-export interface ResultQuestion {
-  id: string
-  text: string
-  difficulty: string
-  subject: { id: string; name: string } | null
-  topic: { id: string; name: string } | null
-  position: number
-  status: QuestionStatus
-  selectedOptionKey: string | null
-  isCorrect: boolean | null
-  confidence: ConfidenceLevel | null
-  timeSpentMs: number
-}
-
-export interface PracticeConfig {
-  mode: PracticeMode
-  subjectId?: string
-  topicId?: string
-  difficulty?: 'EASY' | 'MEDIUM' | 'HARD'
-  count: number
-  timeLimitSeconds?: number
-  randomize: boolean
-  collectionId?: string
-  title?: string
+  weakTopics: Array<{
+    name: string
+    accuracy: number
+    correct: number
+    total: number
+  }>
+  questions: Array<{
+    id: string
+    text: string
+    difficulty: string
+    subject: { id: string; name: string } | null
+    topic: { id: string; name: string } | null
+    position: number
+    status: QuestionStatus
+    selectedLabel: string | null
+    isCorrect: boolean | null
+    confidence: ConfidenceLevel | null
+    timeSpentMs: number
+  }>
 }

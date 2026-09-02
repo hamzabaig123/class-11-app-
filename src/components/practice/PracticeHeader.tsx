@@ -64,40 +64,22 @@ export function PracticeHeader({ session, onExit }: PracticeHeaderProps) {
   const router = useRouter()
   const [exitDialogOpen, setExitDialogOpen] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(() => {
+    if (!session.startedAt) return 0
     return Date.now() - new Date(session.startedAt).getTime()
   })
 
-  const saveProgress = trpc.practice.saveProgress.useMutation()
-
   useEffect(() => {
+    if (!session.startedAt) return
     const interval = setInterval(() => {
       setElapsedMs(Date.now() - new Date(session.startedAt).getTime())
     }, 1000)
     return () => clearInterval(interval)
   }, [session.startedAt])
 
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      saveProgress.mutate({ sessionId: session.id, currentIndex: session.currentIndex })
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [session.id, session.currentIndex])
-
   const handleSaveAndExit = useCallback(() => {
-    saveProgress.mutate(
-      { sessionId: session.id, currentIndex: session.currentIndex },
-      {
-        onSuccess: () => {
-          router.push('/dashboard')
-        },
-        onError: () => {
-          router.push('/dashboard')
-        },
-      }
-    )
+    router.push('/dashboard')
     setExitDialogOpen(false)
-  }, [session.id, session.currentIndex, router])
+  }, [router])
 
   const handleAbandon = useCallback(() => {
     onExit()

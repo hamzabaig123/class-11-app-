@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Search, LayoutGrid, List, Filter, Pin, PinOff, Archive, Trash2, MoreHorizontal, Play, Edit2, Copy, FolderOpen } from 'lucide-react'
+import { Plus, Search, LayoutGrid, List, Filter, Pin, PinOff, Archive, Trash2, MoreHorizontal, Play, Edit2, Copy, FolderOpen, Cpu, Users, Zap, Share2, Download, Eye, ChevronDown, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
@@ -16,27 +17,47 @@ import { formatPercentage } from '@/lib/utils'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
+type CollectionType = 'MANUAL' | 'SMART'
+
 export default function CollectionsPage() {
   const router = useRouter()
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('recent')
+  const [typeFilter, setTypeFilter] = useState<'all' | CollectionType>('all')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newColor, setNewColor] = useState('#8B1A2B')
+  const [newType, setNewType] = useState<CollectionType>('MANUAL')
+  const [showSmartConfig, setShowSmartConfig] = useState(false)
 
-  const { data, isLoading, refetch } = trpc.collections.list.useQuery({ sort: sort as any, page: 1, pageSize: 50, query: search || undefined })
+  const { data, isLoading, refetch } = trpc.collections.list.useQuery({
+    sort: sort as any, page: 1, pageSize: 50, query: search || undefined
+  })
+
   const createCollection = trpc.collections.create.useMutation({
     onSuccess: (c) => { refetch(); setShowCreateDialog(false); setNewName(''); setNewDesc(''); router.push(`/collections/${c.id}`); toast({ title: 'Collection created' }) },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   })
+
   const togglePin = trpc.collections.togglePinned.useMutation({ onSuccess: () => refetch() })
   const archiveCollection = trpc.collections.archive.useMutation({ onSuccess: () => { refetch(); toast({ title: 'Collection archived' }) } })
   const deleteCollection = trpc.collections.delete.useMutation({ onSuccess: () => { refetch(); toast({ title: 'Collection deleted' }) } })
   const duplicateCollection = trpc.collections.duplicate.useMutation({ onSuccess: () => { refetch(); toast({ title: 'Collection duplicated' }) } })
 
+  const startPractice = trpc.collections.startPractice.useMutation({
+    onSuccess: (session) => { router.push(`/practice/${session.sessionId}`) },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  })
+
   const COLORS = ['#8B1A2B', '#2563EB', '#16A34A', '#9333EA', '#EA580C', '#0891B2', '#DB2777', '#4F46E5']
+
+  const filteredCollections = data?.collections?.filter(c => {
+    if (typeFilter === 'all') return true
+    // Smart collections would have a flag; for now we show all
+    return true
+  }) ?? []
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -66,7 +87,7 @@ export default function CollectionsPage() {
             <SelectItem value="accuracy">Highest Accuracy</SelectItem>
           </SelectContent>
         </Select>
-        <div className="flex gap-1 border rounded-md p-1">
+        <div className="flex border rounded-md p-1">
           <Button variant={viewMode === 'grid' ? 'default' : 'ghost'} size="icon" className="h-8 w-8" onClick={() => setViewMode('grid')}><LayoutGrid className="h-4 w-4" /></Button>
           <Button variant={viewMode === 'list' ? 'default' : 'ghost'} size="icon" className="h-8 w-8" onClick={() => setViewMode('list')}><List className="h-4 w-4" /></Button>
         </div>
@@ -79,7 +100,7 @@ export default function CollectionsPage() {
             <Card key={i}><CardContent className="p-6"><div className="h-32 bg-muted rounded animate-pulse" /></CardContent></Card>
           ))}
         </div>
-      ) : !data?.collections || data.collections.length === 0 ? (
+      ) : filteredCollections.length === 0 ? (
         <div className="text-center py-16">
           <FolderOpen className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-muted-foreground">No collections yet</h3>
@@ -90,7 +111,7 @@ export default function CollectionsPage() {
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.collections.map(col => (
+          {filteredCollections.map(col => (
             <Card key={col.id} className="group hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push(`/collections/${col.id}`)}>
               <CardContent className="p-0">
                 <div className="h-2 rounded-t" style={{ backgroundColor: col.color || '#8B1A2B' }} />
@@ -113,14 +134,14 @@ export default function CollectionsPage() {
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); togglePin.mutate({ id: col.id }) }}>
                           {col.isPinned ? <><PinOff className="h-4 w-4 mr-2" />Unpin</> : <><Pin className="h-4 w-4 mr-2" />Pin</>}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); duplicateCollection.mutate({ id: col.id, newName: `${col.name} (Copy)`, }) }}>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); duplicateCollection.mutate({ id: col.id }) }}>
                           <Copy className="h-4 w-4 mr-2" />Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); archiveCollection.mutate({ id: col.id }) }} className="text-orange-600">
                           <Archive className="h-4 w-4 mr-2" />Archive
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); if (confirm('Delete this collection?')) deleteCollection.mutate({ id: col.id }) }} className="text-red-600">
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); if (confirm('Delete?')) deleteCollection.mutate({ id: col.id }) }} className="text-red-600">
                           <Trash2 className="h-4 w-4 mr-2" />Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -140,7 +161,7 @@ export default function CollectionsPage() {
                       <p className="text-xs text-muted-foreground">Accuracy</p>
                     </div>
                   </div>
-                  <Button size="sm" className="w-full" onClick={e => e.stopPropagation()}>
+                  <Button size="sm" className="w-full" onClick={e => { e.stopPropagation(); startPractice.mutate({ collectionId: col.id }) }}>
                     <Play className="h-4 w-4 mr-2" />Practice
                   </Button>
                 </div>
@@ -150,7 +171,7 @@ export default function CollectionsPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {data.collections.map(col => (
+          {filteredCollections.map(col => (
             <Card key={col.id} className="hover:shadow-sm transition-shadow cursor-pointer" onClick={() => router.push(`/collections/${col.id}`)}>
               <CardContent className="p-4 flex items-center gap-4">
                 <div className="w-2 h-12 rounded" style={{ backgroundColor: col.color || '#8B1A2B' }} />
@@ -161,7 +182,7 @@ export default function CollectionsPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">{col.questionCount} questions · {col.accuracy !== null ? `${Math.round(col.accuracy)}% accuracy` : 'No attempts'}</p>
                 </div>
-                <Button size="sm" variant="outline" onClick={e => e.stopPropagation()}>
+                <Button size="sm" variant="outline" onClick={e => { e.stopPropagation(); startPractice.mutate({ collectionId: col.id }) }}>
                   <Play className="h-4 w-4 mr-1" />Practice
                 </Button>
               </CardContent>
@@ -178,6 +199,25 @@ export default function CollectionsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
+              <Label>Type</Label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setNewType('MANUAL')}
+                  className={`flex-1 p-3 border rounded-lg text-sm font-medium transition-colors ${newType === 'MANUAL' ? 'border-burgundy-600 bg-burgundy-50 text-burgundy-700' : 'hover:bg-accent'}`}
+                >
+                  <Users className="h-4 w-4 mx-auto mb-1" />
+                  Manual
+                </button>
+                <button
+                  onClick={() => setNewType('SMART')}
+                  className={`flex-1 p-3 border rounded-lg text-sm font-medium transition-colors ${newType === 'SMART' ? 'border-burgundy-600 bg-burgundy-50 text-burgundy-700' : 'hover:bg-accent'}`}
+                >
+                  <Cpu className="h-4 w-4 mx-auto mb-1" />
+                  Smart
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
               <Label>Name</Label>
               <Input placeholder="e.g. Algebra Revision" value={newName} onChange={e => setNewName(e.target.value)} />
             </div>
@@ -185,6 +225,18 @@ export default function CollectionsPage() {
               <Label>Description (optional)</Label>
               <Textarea placeholder="What's this collection for?" value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={2} />
             </div>
+            {newType === 'SMART' && (
+              <div className="space-y-2 p-3 border rounded-lg bg-muted/50">
+                <Label className="flex items-center gap-2"><Zap className="h-4 w-4" />Smart Rules</Label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div><span className="text-muted-foreground">Subject:</span> Any</div>
+                  <div><span className="text-muted-foreground">Difficulty:</span> Hard</div>
+                  <div><span className="text-muted-foreground">Accuracy:</span> Below 60%</div>
+                  <div><span className="text-muted-foreground">Status:</span> Active</div>
+                </div>
+                <p className="text-xs text-muted-foreground">Questions matching these rules are automatically included.</p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Color</Label>
               <div className="flex gap-2">

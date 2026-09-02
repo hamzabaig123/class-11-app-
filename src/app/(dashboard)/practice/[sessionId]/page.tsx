@@ -31,6 +31,7 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
   const [localAnswers, setLocalAnswers] = useState<Record<string, FeedbackData>>({})
   const [localHints, setLocalHints] = useState<Record<string, string | null>>({})
   const [currentIdx, setCurrentIdx] = useState<number | null>(null)
+  const [clientSequence, setClientSequence] = useState(0)
 
   const { data: session, isLoading, error } = trpc.practice.getSession.useQuery(
     { sessionId },
@@ -44,11 +45,20 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
     }
   )
 
-  const submitAnswer = trpc.practice.submitAnswer.useMutation({
+  const startSession = trpc.practice.startSession.useMutation({
+    onSuccess: () => {
+      // Session started, now we can answer
+    },
+    onError: (error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+    },
+  })
+
+  const answerMutation = trpc.practice.answer.useMutation({
     onSuccess: (data) => {
       if (session) {
-        const currentQuestion = session.questions[session.currentIndex]
-        if (currentQuestion) {
+        const currentQuestion = session.questions[currentIdx ?? session.currentIndex]
+        if (currentQuestion && !data.alreadyAnswered) {
           setLocalAnswers(prev => ({
             ...prev,
             [currentQuestion.id]: {
@@ -109,6 +119,13 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
     },
   })
 
+  // Auto-start session on first load
+  useEffect(() => {
+    if (session && session.status === 'READY' && !startSession.isSuccess) {
+      startSession.mutate({ sessionId })
+    }
+  }, [session, sessionId, startSession])
+
   useEffect(() => {
     if (session && currentIdx === null) {
       setCurrentIdx(session.currentIndex)
@@ -131,16 +148,20 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
     if (!question) return
 
     const timeSpentMs = question.timeSpentMs > 0 ? question.timeSpentMs : 5000
+    const newSequence = clientSequence + 1
+    setClientSequence(newSequence)
 
-    submitAnswer.mutate({
+    answerMutation.mutate({
       sessionId,
-      questionId: question.id,
-      selectedOptionKey: selectedOption as 'A' | 'B' | 'C' | 'D',
+      sessionQuestionId: question.id,
+      clientEventId: `${sessionId}-${question.id}-${newSequence}`,
+      sequence: newSequence,
+      selectedLabel: selectedOption as 'A' | 'B' | 'C' | 'D',
       timeSpentMs,
       confidence: confidence as 'unsure' | 'medium' | 'confident' | undefined,
       hintUsed: hintUsed ?? false,
     })
-  }, [session, currentIdx, sessionId, submitAnswer])
+  }, [session, currentIdx, sessionId, answerMutation, clientSequence])
 
   const handleSkip = useCallback(() => {
     if (!session) return
@@ -245,7 +266,7 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
               onSubmit={handleSubmitAnswer}
               onRevealHint={() => revealHint.mutate({ sessionId, questionId: currentQuestion.id })}
               isSubmitted={isSubmitted}
-              isSubmitting={submitAnswer.isLoading}
+              isSubmitting={answerMutation.isLoading}
               feedback={feedback}
               hint={hint}
             />
@@ -254,7 +275,7 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
               <ExplanationCard
                 isCorrect={feedback.isCorrect}
                 correctLabel={feedback.correctLabel}
-                selectedLabel={currentQuestion.selectedOptionKey || ''}
+                selectedLabel={currentQuestion.selectedLabel || ''}
                 explanation={feedback.explanation}
               />
             )}
@@ -263,16 +284,16 @@ export default function PracticeSessionPage({ params }: { params: { sessionId: s
               hasPrevious={hasPrevious}
               hasNext={hasNext}
               isSubmitted={isSubmitted}
-              isSubmitting={submitAnswer.isLoading}
-              selectedOption={currentQuestion.selectedOptionKey}
+              isSubmitting={answerMutation.isLoading}
+              selectedOption={currentQuestion.selectedLabel}
               isLastQuestion={isLastQuestion}
               unansweredCount={session.questions.filter(q => q.status === 'UNANSWERED').length}
               onPrevious={handlePrevious}
               onNext={handleNext}
               onSkip={handleSkip}
               onSubmit={() => {
-                if (currentQuestion.selectedOptionKey) {
-                  handleSubmitAnswer(currentQuestion.selectedOptionKey)
+                if (currentQuestion.selectedLabel) {
+                  handleSubmitAnswer(currentQuestion.selectedLabel)
                 }
               }}
               onFinish={handleFinish}

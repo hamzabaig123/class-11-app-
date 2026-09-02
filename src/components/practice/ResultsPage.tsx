@@ -147,9 +147,9 @@ export function ResultsPage({ results }: ResultsPageProps) {
                 <p className="text-sm font-medium line-clamp-2">{q.text}</p>
                 <div className="flex items-center gap-2 mt-1">
                   {q.subject && <Badge variant="secondary" className="text-xs">{q.subject.name}</Badge>}
-                  {q.selectedOptionKey && (
+                  {q.selectedLabel && (
                     <span className="text-xs text-muted-foreground">
-                      Answered: {q.selectedOptionKey}
+                      Answered: {q.selectedLabel}
                     </span>
                   )}
                   {q.status === 'SKIPPED' && (
