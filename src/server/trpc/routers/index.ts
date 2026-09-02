@@ -287,10 +287,119 @@ export const appRouter = createTRPCRouter({
       const items = await prisma.reviewItem.findMany({ where: { userId: ctx.user.id, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] }, nextReviewAt: { lte: now } }, include: { question: { include: { options: { orderBy: { position: 'asc' } }, answer: true, subject: { select: { id: true, name: true, color: true } }, topic: { select: { id: true, name: true } }, chapter: { select: { id: true, name: true } } } } }, orderBy: { nextReviewAt: 'asc' } })
       return items.map(item => ({ ...item, question: item.question }))
     }),
-    startSession: protectedProcedure.input(z.object({ questionIds: z.array(z.string()), title: z.string().optional() })).mutation(async ({ ctx, input }) => {
-      const session = await prisma.practiceSession.create({ data: { userId: ctx.user.id, title: input.title, questionCount: input.questionIds.length } })
-      await prisma.practiceSessionQuestion.createMany({ data: input.questionIds.map((questionId, index) => ({ sessionId: session.id, questionId, position: index })) })
-      return session
+    allItems: protectedProcedure.input(z.object({ status: z.enum(['NEW', 'LEARNING', 'REVIEW', 'LAPSED', 'MASTERED']).optional() })).query(async ({ ctx, input }) => {
+      const where: any = { userId: ctx.user.id }
+      if (input.status) where.status = input.status
+      const items = await prisma.reviewItem.findMany({ where, include: { question: { include: { options: { orderBy: { position: 'asc' } }, answer: true, subject: { select: { id: true, name: true, color: true } }, topic: { select: { id: true, name: true } }, chapter: { select: { id: true, name: true } } } } }, orderBy: { nextReviewAt: 'asc' } })
+      return items.map(item => ({ ...item, question: item.question }))
+    }),
+    startSession: protectedProcedure.input(z.object({ questionIds: z.array(z.string()).min(1), title: z.string().optional() })).mutation(async ({ ctx, input }) => {
+      const session = await prisma.practiceSession.create({
+        data: {
+          userId: ctx.user.id,
+          title: input.title || 'Revision Session',
+          mode: 'REVIEW',
+          type: 'PRACTICE',
+          status: 'READY',
+          questionCount: input.questionIds.length,
+        },
+      })
+      await prisma.practiceSessionQuestion.createMany({
+        data: input.questionIds.map((questionId, index) => ({
+          sessionId: session.id,
+          questionId,
+          position: index,
+        })),
+      })
+      await prisma.activityEvent.create({
+        data: {
+          userId: ctx.user.id,
+          type: 'SESSION_STARTED',
+          title: `Started revision: ${input.title || 'Revision Session'}`,
+          entityId: session.id,
+          entityType: 'session',
+        },
+      })
+      return { sessionId: session.id, questionCount: input.questionIds.length }
+    }),
+    schedule: protectedProcedure.input(z.object({ questionId: z.string(), action: z.enum(['postpone', 'mastered', 'reset']), daysUntilReview: z.number().int().min(0).optional() })).mutation(async ({ ctx, input }) => {
+      const reviewItem = await prisma.reviewItem.findFirst({ where: { userId: ctx.user.id, questionId: input.questionId } })
+      if (!reviewItem) throw new TRPCError({ code: 'NOT_FOUND', message: 'Review item not found' })
+
+      const now = new Date()
+      let updateData: any = { lastReviewedAt: now }
+
+      switch (input.action) {
+        case 'mastered':
+          updateData.status = 'MASTERED'
+          updateData.intervalDays = 30
+          updateData.nextReviewAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+          break
+        case 'postpone':
+          const days = input.daysUntilReview ?? 3
+          updateData.status = 'REVIEW'
+          updateData.intervalDays = days
+          updateData.nextReviewAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
+          break
+        case 'reset':
+          updateData.status = 'NEW'
+          updateData.intervalDays = 0
+          updateData.repetitions = 0
+          updateData.nextReviewAt = now
+          break
+      }
+
+      await prisma.reviewItem.update({ where: { id: reviewItem.id }, data: updateData })
+
+      await prisma.revisionEvent.create({
+        data: {
+          userId: ctx.user.id,
+          questionId: input.questionId,
+          outcome: input.action,
+          previousDueAt: reviewItem.nextReviewAt,
+          nextReviewAt: updateData.nextReviewAt,
+          intervalDays: updateData.intervalDays ?? 0,
+        },
+      })
+
+      return { success: true }
+    }),
+    bulkSchedule: protectedProcedure.input(z.object({ questionIds: z.array(z.string()).min(1), action: z.enum(['postpone', 'mastered', 'reset']), daysUntilReview: z.number().int().min(0).optional() })).mutation(async ({ ctx, input }) => {
+      const results = await prisma.$transaction(async (tx) => {
+        const items = []
+        for (const questionId of input.questionIds) {
+          const reviewItem = await tx.reviewItem.findFirst({ where: { userId: ctx.user.id, questionId } })
+          if (!reviewItem) continue
+
+          const now = new Date()
+          let updateData: any = { lastReviewedAt: now }
+
+          switch (input.action) {
+            case 'mastered':
+              updateData.status = 'MASTERED'
+              updateData.intervalDays = 30
+              updateData.nextReviewAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+              break
+            case 'postpone':
+              const days = input.daysUntilReview ?? 3
+              updateData.status = 'REVIEW'
+              updateData.intervalDays = days
+              updateData.nextReviewAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
+              break
+            case 'reset':
+              updateData.status = 'NEW'
+              updateData.intervalDays = 0
+              updateData.repetitions = 0
+              updateData.nextReviewAt = now
+              break
+          }
+
+          await tx.reviewItem.update({ where: { id: reviewItem.id }, data: updateData })
+          items.push({ questionId, success: true })
+        }
+        return items
+      })
+      return { results }
     }),
   }),
 

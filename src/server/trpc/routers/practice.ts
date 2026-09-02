@@ -4,6 +4,109 @@ import { prisma } from '@/lib/db'
 import { TRPCError } from '@trpc/server'
 
 export const practiceRouter = createTRPCRouter({
+  summary: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.user.id
+    const now = new Date()
+    const startOfDay = new Date(now); startOfDay.setHours(0, 0, 0, 0)
+    const endOfDay = new Date(now); endOfDay.setHours(23, 59, 59, 999)
+
+    const [dueCount, recentSessions, unfinishedSession, todayStats, weakTopics] = await Promise.all([
+      prisma.reviewItem.count({
+        where: { userId, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] }, nextReviewAt: { lte: now } },
+      }),
+      prisma.practiceSession.findMany({
+        where: { userId, status: 'COMPLETED' },
+        orderBy: { completedAt: 'desc' },
+        take: 5,
+        select: { id: true, title: true, mode: true, score: true, questionCount: true, completedAt: true },
+      }),
+      prisma.practiceSession.findFirst({
+        where: { userId, status: { in: ['IN_PROGRESS', 'PAUSED'] } },
+        orderBy: { lastActiveAt: 'desc' },
+        select: { id: true, title: true, currentIndex: true, questionCount: true, mode: true, status: true },
+      }),
+      prisma.attempt.aggregate({
+        where: { userId, createdAt: { gte: startOfDay, lte: endOfDay } },
+        _count: { id: true },
+      }).then(async (agg) => {
+        const correct = await prisma.attempt.count({
+          where: { userId, isCorrect: true, createdAt: { gte: startOfDay, lte: endOfDay } },
+        })
+        return { total: agg._count.id, correct }
+      }),
+      prisma.reviewItem.findMany({
+        where: { userId, status: { in: ['LAPSED', 'LEARNING'] } },
+        include: { question: { select: { id: true, text: true, subject: { select: { name: true } } } } },
+        orderBy: { nextReviewAt: 'asc' },
+        take: 5,
+      }),
+    ])
+
+    return {
+      dueCount,
+      recentSessions: recentSessions.map(s => ({
+        ...s,
+        completedAt: s.completedAt?.toISOString() ?? null,
+      })),
+      unfinishedSession: unfinishedSession ? {
+        ...unfinishedSession,
+        status: unfinishedSession.status as string,
+      } : null,
+      todayStats,
+      weakTopics: weakTopics.map(wt => ({
+        questionId: wt.questionId,
+        questionText: wt.question.text.slice(0, 100),
+        subjectName: wt.question.subject?.name ?? 'Unknown',
+        status: wt.status,
+        nextReviewAt: wt.nextReviewAt.toISOString(),
+      })),
+    }
+  }),
+
+  getOptions: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.user.id
+    const [subjects, collections, questionCount, dueReviewCount] = await Promise.all([
+      prisma.subject.findMany({
+        where: { userId, status: 'ACTIVE' },
+        orderBy: { position: 'asc' },
+        include: {
+          chapters: {
+            where: { status: 'ACTIVE' },
+            orderBy: { position: 'asc' },
+            select: { id: true, name: true },
+          },
+          _count: { select: { questions: { where: { status: 'ACTIVE' } } } },
+        },
+      }),
+      prisma.collection.findMany({
+        where: { userId, status: 'ACTIVE' },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, name: true, _count: { select: { questions: true } } },
+        take: 20,
+      }),
+      prisma.question.count({ where: { userId, status: 'ACTIVE' } }),
+      prisma.reviewItem.count({
+        where: { userId, status: { in: ['NEW', 'LEARNING', 'REVIEW', 'LAPSED'] }, nextReviewAt: { lte: new Date() } },
+      }),
+    ])
+
+    return {
+      subjects: subjects.map(s => ({
+        id: s.id,
+        name: s.name,
+        questionCount: s._count.questions,
+        chapters: s.chapters,
+      })),
+      collections: collections.map(c => ({
+        id: c.id,
+        name: c.name,
+        questionCount: c._count.questions,
+      })),
+      totalQuestions: questionCount,
+      dueReviewCount,
+    }
+  }),
+
   createSession: protectedProcedure
     .input(z.object({
       mode: z.enum(['QUICK', 'SUBJECT', 'WEAK', 'REVIEW', 'COLLECTION', 'MOCK', 'UNANSWERED']).default('QUICK'),

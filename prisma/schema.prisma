@@ -1,4 +1,4 @@
-// Prisma Schema for MCQ Master (SQLite)
+// Prisma Schema for MCQ Master + Q&A Module (SQLite)
 // Run: npx prisma generate && npx prisma db push
 
 generator client {
@@ -10,15 +10,22 @@ datasource db {
   url      = "file:./dev.db"
 }
 
+// ===========================================
+// USER & AUTH
+// ===========================================
+
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  passwordHash  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  name            String?
+  email           String?   @unique
+  emailNormalized String?   @unique
+  emailVerified   DateTime?
+  image           String?
+  passwordHash    String?
+  role            String    @default("student")
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   accounts             Account[]
   sessions             Session[]
@@ -44,6 +51,12 @@ model User {
   noteRevisions        NoteRevision[]
   sources              Source[]
   questionRevisions    QuestionRevision[]
+  qaReports            QuestionReport[]
+  qaAuditLogs          ContentAuditLog[]
+  revisionEvents       RevisionEvent[]
+  studyGoal            StudyGoal?
+  studyGoalEvents      StudyGoalEvent[]
+  practiceReports      PracticeReport[]
 }
 
 model Account {
@@ -83,6 +96,10 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+// ===========================================
+// CURRICULUM HIERARCHY
+// ===========================================
 
 model Subject {
   id          String    @id @default(cuid())
@@ -136,6 +153,7 @@ model Chapter {
   userId      String
   subjectId   String
   name        String
+  slug        String?
   chapterNo   String?
   description String?
   position    Int       @default(0)
@@ -199,6 +217,10 @@ model QuestionSource {
   @@index([sourceId])
 }
 
+// ===========================================
+// Q&A MODULE
+// ===========================================
+
 model Question {
   id                     String    @id @default(cuid())
   text                   String
@@ -211,6 +233,9 @@ model Question {
   difficulty             String    @default("MEDIUM")
   status                 String    @default("DRAFT")
   questionType           String    @default("MCQ")
+  marks                  Int?
+  estimatedMinutes       Int?
+  examLabel              String?
   position               Int       @default(0)
   version                Int       @default(1)
   deletedAt              DateTime?
@@ -238,15 +263,113 @@ model Question {
   questionSources   QuestionSource[]
   revisions         QuestionRevision[]
 
+  // Q&A Module relations
+  answerContent     QuestionAnswerContent?
+  markingPoints     QuestionMarkingPoint[]
+  relatedFrom       QuestionRelation[]        @relation("RelatedFromQuestion")
+  relatedTo         QuestionRelation[]        @relation("RelatedToQuestion")
+  reports           QuestionReport[]
+
+  // Practice & Revision tracking
+  revisionEvents    RevisionEvent[]
+  practiceReports   PracticeReport[]
+
   @@index([userId])
   @@index([subjectId])
   @@index([topicId])
   @@index([chapterId])
   @@index([status])
+  @@index([questionType])
   @@index([userId, createdAt])
   @@index([userId, status, updatedAt])
   @@index([userId, subjectId, chapterId])
+  @@index([chapterId, status, questionType, updatedAt])
 }
+
+// Long-form answer content for SHORT/LONG questions
+model QuestionAnswerContent {
+  id          String   @id @default(cuid())
+  questionId  String   @unique
+  content     String
+  keyPoints   String
+  structure   String?
+  wordCount   Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+// Marking points for exam answers
+model QuestionMarkingPoint {
+  id           String   @id @default(cuid())
+  questionId   String
+  pointText    String
+  marks        Int?
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, displayOrder])
+}
+
+// Related questions
+model QuestionRelation {
+  questionId       String
+  relatedQuestionId String
+  relationType     String  @default("related")
+  createdAt        DateTime @default(now())
+
+  question        Question @relation("RelatedFromQuestion", fields: [questionId], references: [id], onDelete: Cascade)
+  relatedQuestion Question @relation("RelatedToQuestion", fields: [relatedQuestionId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, relatedQuestionId])
+  @@index([relatedQuestionId])
+}
+
+// Question reports (student feedback)
+model QuestionReport {
+  id          String   @id @default(cuid())
+  questionId  String
+  reporterId  String
+  category    String
+  description String
+  status      String   @default("open")
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  reporter User     @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+// Content audit log
+model ContentAuditLog {
+  id          String   @id @default(cuid())
+  actorId     String
+  entityType  String
+  entityId    String
+  action      String
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// ===========================================
+// MCQ-SPECIFIC MODELS
+// ===========================================
 
 model QuestionOption {
   id         String @id @default(cuid())
@@ -299,6 +422,10 @@ model QuestionRevision {
   @@unique([questionId, version])
   @@index([questionId, createdAt])
 }
+
+// ===========================================
+// PRACTICE & ATTEMPTS
+// ===========================================
 
 model Attempt {
   id            String   @id @default(cuid())
@@ -377,6 +504,8 @@ model PracticeSession {
   attempts          Attempt[]
   practiceQuestions PracticeSessionQuestion[]
   answerEvents      PracticeAnswerEvent[]
+  revisionEvents    RevisionEvent[]
+  practiceReports   PracticeReport[]
 
   @@index([userId, status, lastActiveAt])
   @@index([userId, createdAt])
@@ -431,23 +560,26 @@ model PracticeAnswerEvent {
   @@index([sessionId, createdAt])
 }
 
-model ActivityEvent {
-  id          String   @id @default(cuid())
-  userId      String
-  type        String
-  title       String
-  description String?
-  entityId    String?
-  entityType  String?
-  metadata    String?
-  createdAt   DateTime @default(now())
+model QuestionBookmark {
+  id           String   @id @default(cuid())
+  userId       String
+  questionId   String
+  note         String?
+  nextReviewAt DateTime?
+  createdAt    DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, questionId])
   @@index([userId])
-  @@index([userId, createdAt])
-  @@index([type])
+  @@index([questionId])
+  @@index([userId, nextReviewAt])
 }
+
+// ===========================================
+// IMPORTS
+// ===========================================
 
 model Import {
   id             String    @id @default(cuid())
@@ -513,93 +645,9 @@ model ImportedQuestion {
   @@index([status])
 }
 
-model UserSettings {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
-  timezone              String   @default("UTC")
-  dateFormat            String   @default("YYYY-MM-DD")
-  timeFormat            String   @default("24h")
-  theme                 String   @default("SYSTEM")
-  emailNotifications    Boolean  @default(true)
-  pushNotifications     Boolean  @default(false)
-  dailyReminder         Boolean  @default(false)
-  reminderTime          String?
-  masteryThreshold      Int      @default(3)
-  easeFactorDefault     Float    @default(2.5)
-  dailyQuestionGoal     Int      @default(20)
-  dailyMinuteGoal       Int      @default(30)
-  defaultPracticeMode   String   @default("QUICK")
-  defaultQuestionCount  Int      @default(10)
-  timerPreference       String   @default("OFF")
-  defaultDifficulty     String   @default("MEDIUM")
-  explanationPreference String   @default("IMMEDIATE")
-  hintPreference        String   @default("ALLOWED")
-  weekendReview         String   @default("NORMAL")
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model QuestionBookmark {
-  id         String   @id @default(cuid())
-  userId     String
-  questionId String
-  createdAt  DateTime @default(now())
-
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, questionId])
-  @@index([userId])
-  @@index([questionId])
-}
-
-model NotificationSettings {
-  id                        String   @id @default(cuid())
-  userId                    String   @unique
-  dueReviewEnabled          Boolean  @default(true)
-  dailyGoalEnabled          Boolean  @default(true)
-  importCompletionEnabled   Boolean  @default(true)
-  practiceCompletionEnabled Boolean  @default(true)
-  preferredHour             Int?
-  inAppEnabled              Boolean  @default(true)
-  updatedAt                 DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model UserSession {
-  id                String    @id @default(cuid())
-  userId            String
-  providerSessionId String
-  deviceLabel       String?
-  ipHash            String?
-  userAgentSummary  String?
-  createdAt         DateTime  @default(now())
-  lastSeenAt        DateTime  @default(now())
-  expiresAt         DateTime
-  revokedAt         DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-model DataExportJob {
-  id               String    @id @default(cuid())
-  userId           String
-  status           String    @default("QUEUED")
-  format           String    @default("JSON")
-  storageObjectKey String?
-  expiresAt        DateTime?
-  createdAt        DateTime  @default(now())
-  completedAt      DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
+// ===========================================
+// COLLECTIONS & NOTES
+// ===========================================
 
 model Collection {
   id               String    @id @default(cuid())
@@ -721,4 +769,183 @@ model NoteRevision {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([noteId])
+}
+
+// ===========================================
+// ACTIVITY & AUDIT
+// ===========================================
+
+model ActivityEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  title       String
+  description String?
+  entityId    String?
+  entityType  String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([type])
+}
+
+// ===========================================
+// USER SETTINGS & SESSIONS
+// ===========================================
+
+model UserSettings {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  timezone              String   @default("UTC")
+  dateFormat            String   @default("YYYY-MM-DD")
+  timeFormat            String   @default("24h")
+  theme                 String   @default("SYSTEM")
+  emailNotifications    Boolean  @default(true)
+  pushNotifications     Boolean  @default(false)
+  dailyReminder         Boolean  @default(false)
+  reminderTime          String?
+  masteryThreshold      Int      @default(3)
+  easeFactorDefault     Float    @default(2.5)
+  dailyQuestionGoal     Int      @default(20)
+  dailyMinuteGoal       Int      @default(30)
+  defaultPracticeMode   String   @default("QUICK")
+  defaultQuestionCount  Int      @default(10)
+  timerPreference       String   @default("OFF")
+  defaultDifficulty     String   @default("MEDIUM")
+  explanationPreference String   @default("IMMEDIATE")
+  hintPreference        String   @default("ALLOWED")
+  weekendReview         String   @default("NORMAL")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationSettings {
+  id                        String   @id @default(cuid())
+  userId                    String   @unique
+  dueReviewEnabled          Boolean  @default(true)
+  dailyGoalEnabled          Boolean  @default(true)
+  importCompletionEnabled   Boolean  @default(true)
+  practiceCompletionEnabled Boolean  @default(true)
+  preferredHour             Int?
+  inAppEnabled              Boolean  @default(true)
+  updatedAt                 DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserSession {
+  id                String    @id @default(cuid())
+  userId            String
+  providerSessionId String
+  deviceLabel       String?
+  ipHash            String?
+  userAgentSummary  String?
+  createdAt         DateTime  @default(now())
+  lastSeenAt        DateTime  @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model DataExportJob {
+  id               String    @id @default(cuid())
+  userId           String
+  status           String    @default("QUEUED")
+  format           String    @default("JSON")
+  storageObjectKey String?
+  expiresAt        DateTime?
+  createdAt        DateTime  @default(now())
+  completedAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ===========================================
+// PRACTICE & REVISION TRACKING
+// ===========================================
+
+model RevisionEvent {
+  id                 String    @id @default(cuid())
+  userId             String
+  questionId         String
+  practiceSessionId  String?
+  outcome            String    // correct, incorrect, skipped
+  confidence         String?   // unsure, medium, confident
+  previousDueAt      DateTime?
+  nextReviewAt       DateTime?
+  intervalDays       Int       @default(0)
+  schedulerVersion   String    @default("1.0")
+  createdAt          DateTime  @default(now())
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question         @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  session  PracticeSession? @relation(fields: [practiceSessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([questionId])
+  @@index([practiceSessionId])
+  @@index([userId, createdAt])
+}
+
+model StudyGoal {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  dailyQuestionTarget Int      @default(20)
+  dailyMinutesTarget Int?
+  timezone           String    @default("UTC")
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events StudyGoalEvent[]
+}
+
+model StudyGoalEvent {
+  id               String   @id @default(cuid())
+  userId           String
+  goalId           String
+  eventDate        DateTime
+  questionsCompleted Int    @default(0)
+  minutesSpent     Int      @default(0)
+  targetReached    Boolean  @default(false)
+  updatedAt        DateTime @updatedAt
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal StudyGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventDate])
+  @@index([userId])
+  @@index([eventDate])
+}
+
+model PracticeReport {
+  id               String   @id @default(cuid())
+  userId           String
+  sessionId        String?
+  questionId       String
+  category         String   // incorrect_answer, outdated_content, unclear_question, other
+  description      String?
+  status           String   @default("pending") // pending, reviewed, resolved
+  createdAt        DateTime @default(now())
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session PracticeSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  question Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([questionId])
+  @@index([status])
 }
