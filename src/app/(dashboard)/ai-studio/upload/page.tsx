@@ -6,31 +6,31 @@ import { Upload, FileText, Image, X, AlertCircle, CheckCircle2, Loader2 } from '
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { trpc } from '@/lib/trpc'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 const ACCEPTED_TYPES = {
   document: ['.pdf', '.docx', '.txt'],
-  image: ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
-  all: ['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.csv', '.json'],
+  image: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'],
+  all: ['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'],
 }
 
 const ACCEPTED_MIME = {
   document: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'],
-  image: ['image/png', 'image/jpeg', 'image/gif', 'image/bmp'],
+  image: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'],
   all: [
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'text/plain',
     'image/png',
     'image/jpeg',
+    'image/webp',
     'image/gif',
     'image/bmp',
-    'text/csv',
-    'application/json',
   ],
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB
 
 interface UploadedFile {
   file: File
@@ -47,16 +47,8 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const createImport = trpc.imports.create.useMutation({
-    onSuccess: (data) => {
-      router.push(`/ai-studio/review/${data.id}`)
-    },
-    onError: (err) => {
-      setError(err.message)
-      setUploading(false)
-    },
-  })
+  const [subject, setSubject] = useState('')
+  const [topic, setTopic] = useState('')
 
   const validateFile = (file: File): string | null => {
     const ext = '.' + file.name.split('.').pop()?.toLowerCase()
@@ -68,7 +60,7 @@ export default function UploadPage() {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return `File size exceeds 50MB limit`
+      return `File size exceeds 25MB limit`
     }
 
     return null
@@ -124,25 +116,6 @@ export default function UploadPage() {
     })
   }
 
-  const extractTextFromFile = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const text = e.target?.result as string
-        resolve(text || '')
-      }
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      
-      if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-        reader.readAsText(file)
-      } else {
-        // For PDF/DOCX, we'd need client-side libraries
-        // For now, show a message
-        reject(new Error('Only .txt files supported in browser upload. Use API for PDF/DOCX.'))
-      }
-    })
-  }
-
   const handleUpload = async () => {
     const validFiles = files.filter((f) => !f.error)
     if (validFiles.length === 0) {
@@ -156,27 +129,28 @@ export default function UploadPage() {
     try {
       for (const uploadedFile of validFiles) {
         const file = uploadedFile.file
-        
-        // Extract text for TXT files client-side
-        if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-          const text = await extractTextFromFile(file)
-          await createImport.mutateAsync({
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type || 'text/plain',
-            sourceType: 'txt',
-            text,
-          })
-        } else {
-          // For PDF/DOCX - in production would upload to S3 then process
-          // For now, register the import and process server-side
-          await createImport.mutateAsync({
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type || file.name.split('.').pop() || 'unknown',
-            sourceType: file.name.endsWith('.pdf') ? 'pdf' : 
-                       file.name.endsWith('.docx') ? 'docx' : 'txt',
-          })
+
+        // Create FormData with actual file bytes
+        const formData = new FormData()
+        formData.append('file', file)
+        if (subject) formData.append('subject', subject)
+        if (topic) formData.append('topic', topic)
+
+        const response = await fetch('/api/imports/upload', {
+          method: 'POST',
+          body: formData,
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Upload failed')
+        }
+
+        // Redirect to review page for the first successful import
+        if (data.importId) {
+          router.push(`/ai-studio/review/${data.importId}`)
+          return
         }
       }
     } catch (err) {
@@ -187,7 +161,7 @@ export default function UploadPage() {
 
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase()
-    if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].includes(ext || '')) {
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(ext || '')) {
       return <Image className="h-5 w-5 text-blue-500" />
     }
     return <FileText className="h-5 w-5 text-orange-500" />
@@ -198,11 +172,35 @@ export default function UploadPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Upload Files</h1>
         <p className="text-muted-foreground">
-          {type === 'document' && 'Upload PDF, DOCX, or TXT files to import questions'}
+          {type === 'document' && 'Upload PDF, DOCX, or TXT files'}
           {type === 'image' && 'Upload images to extract questions using OCR'}
           {type === 'all' && 'Upload any supported file type to import questions'}
         </p>
       </div>
+
+      {/* Metadata fields */}
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Subject (optional)</Label>
+              <Input
+                placeholder="e.g. Physics"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Topic (optional)</Label>
+              <Input
+                placeholder="e.g. Chapter 5 — Thermodynamics"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="pt-6">
@@ -235,8 +233,7 @@ export default function UploadPage() {
               </label>
             </Button>
             <p className="text-xs text-muted-foreground mt-4">
-              Max file size: 50MB •{' '}
-              {(ACCEPTED_TYPES[type] || ACCEPTED_TYPES.all).join(', ')}
+              Max file size: 25MB • {(ACCEPTED_TYPES[type] || ACCEPTED_TYPES.all).join(', ')}
             </p>
           </div>
         </CardContent>
@@ -310,7 +307,14 @@ export default function UploadPage() {
                 disabled={uploading || files.filter((f) => !f.error).length === 0}
                 className="flex-1"
               >
-                {uploading ? 'Uploading...' : `Upload ${files.filter((f) => !f.error).length} file(s)`}
+                {uploading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  `Upload ${files.filter((f) => !f.error).length} file(s)`
+                )}
               </Button>
               <Button
                 variant="outline"

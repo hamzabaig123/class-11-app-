@@ -1,4 +1,4 @@
-import pdf from 'pdf-parse'
+import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
 
 export interface ExtractionResult {
@@ -31,10 +31,8 @@ export async function extractText(
       return { text, warnings }
     }
     case 'image': {
-      return {
-        text: '',
-        warnings: ['Image/OCR extraction not yet implemented'],
-      }
+      const result = await extractImage(buffer, fileName)
+      return result
     }
     case 'ai_generated': {
       return { text: '', warnings: [] }
@@ -46,19 +44,30 @@ export async function extractText(
 
 async function extractPdf(buffer: Buffer): Promise<ExtractionResult> {
   const warnings: string[] = []
-  const data = await pdf(buffer)
+  let parser: PDFParse | null = null
 
-  const text = data.text || ''
-  const pageCount = data.numpages
+  try {
+    parser = new PDFParse({ data: buffer })
+    const data = await parser.getText()
 
-  const avgCharsPerPage = text.length / (pageCount || 1)
-  if (avgCharsPerPage < 50) {
-    warnings.push(
-      `Low text density (${Math.round(avgCharsPerPage)} chars/page). This may be a scanned PDF requiring OCR.`
-    )
+    const text = data.text || ''
+    const pageCount = data.numpages
+
+    const avgCharsPerPage = text.length / (pageCount || 1)
+    if (avgCharsPerPage < 50) {
+      warnings.push(
+        `Low text density (${Math.round(avgCharsPerPage)} chars/page). This may be a scanned PDF requiring OCR.`
+      )
+    }
+
+    return { text, pageCount, warnings }
+  } catch (error) {
+    throw new Error(`PDF parsing failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+  } finally {
+    if (parser) {
+      parser.destroy()
+    }
   }
-
-  return { text, pageCount, warnings }
 }
 
 async function extractDocx(buffer: Buffer): Promise<ExtractionResult> {
@@ -73,4 +82,79 @@ async function extractDocx(buffer: Buffer): Promise<ExtractionResult> {
   }
 
   return { text: result.value, warnings }
+}
+
+async function extractImage(buffer: Buffer, fileName: string): Promise<ExtractionResult> {
+  const warnings: string[] = []
+
+  // Convert buffer to base64 data URL
+  const mimeType = getMimeType(fileName)
+  const base64 = buffer.toString('base64')
+  const dataUrl = `data:${mimeType};base64,${base64}`
+
+  try {
+    const text = await performOCR(dataUrl)
+    if (text.trim().length < 30) {
+      warnings.push('OCR produced very little text. The image may be unclear or contain no text.')
+    }
+    return { text, warnings }
+  } catch (error) {
+    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
+}
+
+function getMimeType(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'png':
+      return 'image/png'
+    case 'webp':
+      return 'image/webp'
+    case 'gif':
+      return 'image/gif'
+    case 'bmp':
+      return 'image/bmp'
+    default:
+      return 'image/png'
+  }
+}
+
+async function performOCR(dataUrl: string): Promise<string> {
+  const OpenAI = (await import('openai')).default
+
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY || '',
+    baseURL: process.env.OPENAI_BASE_URL || 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': process.env.NEXTAUTH_URL || 'http://localhost:3000',
+      'X-Title': 'MCQ Master',
+    },
+  })
+
+  const model = process.env.OPENAI_VISION_MODEL || 'google/gemini-2.0-flash-001'
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Transcribe all visible text in this image exactly as it appears. Preserve question numbering (e.g. "Q1.", "1.", "(1)"), option labels (e.g. "A.", "(A)", "A)"), and paragraph structure. If a region is unreadable, mark it as [unreadable]. Return only the transcription, no explanations.`,
+          },
+          {
+            type: 'image_url',
+            image_url: { url: dataUrl },
+          },
+        ],
+      },
+    ],
+    temperature: 0.1,
+  })
+
+  return response.choices[0]?.message?.content || ''
 }
